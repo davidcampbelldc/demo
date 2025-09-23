@@ -1,0 +1,17 @@
+# Cloudflare Pages configuration for OWASP Juice Shop
+
+name = "juice-shop-peak3000"
+compatibility_date = "2024-01-15"
+pages_build_output_dir = "frontend/dist/frontend"
+
+[env.production]
+name = "juice-shop-peak3000"
+
+[env.preview]
+name = "juice-shop-peak3000-preview"
+
+# Environment variables
+[vars]
+NODE_ENV = "production"
+NODE_CONFIG_ENV = "peak3000"
+BASE_URL = "https://demo.peak3000.co.uk"
