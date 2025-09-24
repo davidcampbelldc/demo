@@ -40,23 +40,52 @@ export class TrackResultComponent implements OnInit {
 
   ngOnInit (): void {
     this.orderId = this.route.snapshot.queryParams.id
-    this.trackOrderService.find(this.orderId).subscribe((results) => {
-      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-      this.results.orderNo = this.sanitizer.bypassSecurityTrustHtml(`<code>${results.data[0].orderId}</code>`)
-      this.results.email = results.data[0].email
-      this.results.totalPrice = results.data[0].totalPrice
-      this.results.products = results.data[0].products
-      this.results.eta = results.data[0].eta !== undefined ? results.data[0].eta : '?'
-      this.results.bonus = results.data[0].bonus
-      this.dataSource.data = this.results.products
-      if (results.data[0].delivered) {
-        this.status = Status.Delivered
-      } else if (this.route.snapshot.data.type) {
+    this.trackOrderService.find(this.orderId).subscribe({
+      next: (results) => {
+        // Check if results.data exists and has at least one element
+        if (results?.data && results.data.length > 0 && results.data[0]) {
+          const orderData = results.data[0]
+          // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+          this.results.orderNo = this.sanitizer.bypassSecurityTrustHtml(`<code>${orderData.orderId}</code>`)
+          this.results.email = orderData.email
+          this.results.totalPrice = orderData.totalPrice
+          this.results.products = orderData.products || []
+          this.results.eta = orderData.eta !== undefined ? orderData.eta : '?'
+          this.results.bonus = orderData.bonus
+          this.dataSource.data = this.results.products
+          if (orderData.delivered) {
+            this.status = Status.Delivered
+          } else if (this.route.snapshot.data.type) {
+            this.status = Status.New
+          } else if (this.results.eta > 2) {
+            this.status = Status.Packing
+          } else {
+            this.status = Status.Transit
+          }
+        } else {
+          // Handle case where no order data is found
+          console.warn('No order data found for ID:', this.orderId)
+          this.results.orderNo = this.sanitizer.bypassSecurityTrustHtml(`<code>${this.orderId}</code>`)
+          this.results.email = 'N/A'
+          this.results.totalPrice = 0
+          this.results.products = []
+          this.results.eta = '?'
+          this.results.bonus = 0
+          this.dataSource.data = []
+          this.status = Status.New
+        }
+      },
+      error: (error) => {
+        console.error('Error fetching order data:', error)
+        // Handle API error gracefully
+        this.results.orderNo = this.sanitizer.bypassSecurityTrustHtml(`<code>${this.orderId}</code>`)
+        this.results.email = 'Error loading data'
+        this.results.totalPrice = 0
+        this.results.products = []
+        this.results.eta = '?'
+        this.results.bonus = 0
+        this.dataSource.data = []
         this.status = Status.New
-      } else if (this.results.eta > 2) {
-        this.status = Status.Packing
-      } else {
-        this.status = Status.Transit
       }
     })
   }

@@ -1,0 +1,22 @@
+name: juice-shop-peak3000
+services:
+- name: juice-shop
+  github:
+    repo: davidcampbelldc/demo
+    branch: master
+    deploy_on_push: true
+  run_command: node build/app.js
+  source_dir: /
+  environment_slug: node-js
+  instance_size_slug: apps-s-1vcpu-1gb
+  instance_count: 1
+  http_port: 3000
+domains:
+- domain: demo.peak3000.co.uk
+  type: PRIMARY
+region: lon
+alerts:
+- rule: DEPLOYMENT_FAILED
+- rule: DOMAIN_FAILED
+features:
+- buildpack-stack=ubuntu-22

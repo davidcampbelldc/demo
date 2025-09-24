@@ -46,43 +46,75 @@ export class OrderCompletionComponent implements OnInit {
         this.orderId = paramMap.get('id')
         this.trackOrderService.find(this.orderId).subscribe({
           next: (results) => {
-            this.promotionalDiscount = results.data[0].promotionalAmount ? parseFloat(results.data[0].promotionalAmount) : 0
-            this.deliveryPrice = results.data[0].deliveryPrice ? parseFloat(results.data[0].deliveryPrice) : 0
-            this.orderDetails.addressId = results.data[0].addressId
-            this.orderDetails.paymentId = results.data[0].paymentId
-            this.orderDetails.totalPrice = results.data[0].totalPrice
-            // eslint-disable-next-line @typescript-eslint/restrict-plus-operands
-            this.orderDetails.itemTotal = results.data[0].totalPrice + this.promotionalDiscount - this.deliveryPrice
-            this.orderDetails.eta = results.data[0].eta || '?'
-            this.orderDetails.products = results.data[0].products
-            this.orderDetails.bonus = results.data[0].bonus
-            this.dataSource = new MatTableDataSource<Element>(this.orderDetails.products)
-            for (const product of this.orderDetails.products) {
-              // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-              this.tweetText += `%0a- ${product.name}`
-            }
-            this.tweetText = this.truncateTweet(this.tweetText)
-            this.configurationService.getApplicationConfiguration().subscribe({
-              next: (config) => {
-                if (config?.application?.social) {
-                  this.tweetText += '%0afrom '
-                  if (config.application.social.twitterUrl) {
-                    this.tweetText += config.application.social.twitterUrl.replace('https://twitter.com/', '@')
-                  } else {
-                    this.tweetText += config.application.name
+            // Check if results.data exists and has at least one element
+            if (results?.data && results.data.length > 0 && results.data[0]) {
+              const orderData = results.data[0]
+              this.promotionalDiscount = orderData.promotionalAmount ? parseFloat(orderData.promotionalAmount) : 0
+              this.deliveryPrice = orderData.deliveryPrice ? parseFloat(orderData.deliveryPrice) : 0
+              this.orderDetails.addressId = orderData.addressId
+              this.orderDetails.paymentId = orderData.paymentId
+              this.orderDetails.totalPrice = orderData.totalPrice
+              // eslint-disable-next-line @typescript-eslint/restrict-plus-operands
+              this.orderDetails.itemTotal = orderData.totalPrice + this.promotionalDiscount - this.deliveryPrice
+              this.orderDetails.eta = orderData.eta || '?'
+              this.orderDetails.products = orderData.products || []
+              this.orderDetails.bonus = orderData.bonus
+              this.dataSource = new MatTableDataSource<Element>(this.orderDetails.products)
+              for (const product of this.orderDetails.products) {
+                // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+                this.tweetText += `%0a- ${product.name}`
+              }
+              this.tweetText = this.truncateTweet(this.tweetText)
+              this.configurationService.getApplicationConfiguration().subscribe({
+                next: (config) => {
+                  if (config?.application?.social) {
+                    this.tweetText += '%0afrom '
+                    if (config.application.social.twitterUrl) {
+                      this.tweetText += config.application.social.twitterUrl.replace('https://twitter.com/', '@')
+                    } else {
+                      this.tweetText += config.application.name
+                    }
                   }
-                }
-              },
-              error: (err) => { console.log(err) }
-            })
-            this.addressService.getById(this.orderDetails.addressId).subscribe({
-              next: (address) => {
-                this.address = address
-              },
-              error: (error) => { console.log(error) }
-            })
+                },
+                error: (err) => { console.log(err) }
+              })
+              if (this.orderDetails.addressId) {
+                this.addressService.getById(this.orderDetails.addressId).subscribe({
+                  next: (address) => {
+                    this.address = address
+                  },
+                  error: (error) => { console.log(error) }
+                })
+              }
+            } else {
+              // Handle case where no order data is found
+              console.warn('No order data found for ID:', this.orderId)
+              this.promotionalDiscount = 0
+              this.deliveryPrice = 0
+              this.orderDetails.addressId = null
+              this.orderDetails.paymentId = null
+              this.orderDetails.totalPrice = 0
+              this.orderDetails.itemTotal = 0
+              this.orderDetails.eta = '?'
+              this.orderDetails.products = []
+              this.orderDetails.bonus = 0
+              this.dataSource = new MatTableDataSource<Element>([])
+            }
           },
-          error: (err) => { console.log(err) }
+          error: (err) => { 
+            console.error('Error fetching order data:', err)
+            // Handle API error gracefully
+            this.promotionalDiscount = 0
+            this.deliveryPrice = 0
+            this.orderDetails.addressId = null
+            this.orderDetails.paymentId = null
+            this.orderDetails.totalPrice = 0
+            this.orderDetails.itemTotal = 0
+            this.orderDetails.eta = '?'
+            this.orderDetails.products = []
+            this.orderDetails.bonus = 0
+            this.dataSource = new MatTableDataSource<Element>([])
+          }
         })
       },
       error: (err) => { console.log(err) }

@@ -1,0 +1,49 @@
+name: dcai-chat
+services:
+- name: dcai
+  github:
+    repo: davidcampbelldc/dcai
+    branch: main
+    deploy_on_push: true
+  run_command: python app.py
+  source_dir: /
+  environment_slug: python
+  instance_size_slug: apps-s-1vcpu-1gb
+  instance_count: 2
+  http_port: 8080
+- name: juice-shop
+  github:
+    repo: davidcampbelldc/demo
+    branch: master
+    deploy_on_push: true
+  run_command: node build/app.js
+  source_dir: /
+  environment_slug: node-js
+  instance_size_slug: apps-s-1vcpu-1gb
+  instance_count: 1
+  http_port: 3000
+domains:
+- domain: dcai.peak3000.co.uk
+  type: PRIMARY
+- domain: demo.peak3000.co.uk
+  type: PRIMARY
+region: lon
+alerts:
+- rule: DEPLOYMENT_FAILED
+- rule: DOMAIN_FAILED
+ingress:
+  rules:
+  - match:
+      path:
+        prefix: /
+      authority: {}
+    component:
+      name: dcai
+  - match:
+      path:
+        prefix: /juice-shop
+      authority: {}
+    component:
+      name: juice-shop
+features:
+- buildpack-stack=ubuntu-22

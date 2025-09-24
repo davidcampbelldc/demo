@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: juice-shop-peak3000
+  labels:
+    costcentre: "NFT"
+    service: "hmpo-nft"
+    container: "jnlp"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: juice-shop-peak3000
+  template:
+    metadata:
+      labels:
+        app: juice-shop-peak3000
+        costcentre: "NFT"
+        service: "hmpo-nft"
+        container: "jnlp"
+    spec:
+      serviceAccountName: neoload
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: juice-shop-peak3000
+        image: registry.digitalocean.com/your-registry/juice-shop-peak3000:latest
+        ports:
+        - containerPort: 3000
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3000"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: juice-shop-peak3000-service
+spec:
+  selector:
+    app: juice-shop-peak3000
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+  type: LoadBalancer
