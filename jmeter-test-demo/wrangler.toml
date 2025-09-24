@@ -1,0 +1,14 @@
+name = "jmeter-test-demo"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+# Bind the D1 database
+[[d1_databases]]
+binding = "DB"
+database_name = "jmeter-test-demo"
+database_id = "c753aa63-5146-45b1-adca-bd5f3ff89f09"
+
+# Optional: Add custom domain or subdomain if you have one
+# routes = [
+#   { pattern = "your-domain.com/*", zone_name = "your-domain.com" }
+# ]

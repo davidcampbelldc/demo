@@ -16,9 +16,8 @@ services:
     repo: davidcampbelldc/demo
     branch: master
     deploy_on_push: true
-  run_command: node build/app.js
+  dockerfile_path: Dockerfile
   source_dir: /
-  environment_slug: node-js
   instance_size_slug: apps-s-1vcpu-1gb
   instance_count: 1
   http_port: 3000
@@ -36,13 +35,15 @@ ingress:
   - match:
       path:
         prefix: /
-      authority: {}
+      authority:
+        exact: dcai.peak3000.co.uk
     component:
       name: dcai
   - match:
       path:
-        prefix: /juice-shop
-      authority: {}
+        prefix: /
+      authority:
+        exact: demo.peak3000.co.uk
     component:
       name: juice-shop
 features:
