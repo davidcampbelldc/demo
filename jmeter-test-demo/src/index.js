@@ -134,30 +134,33 @@ export default {
         });
       }
   
-      // Generate session token
+      // Generate all required tokens for correlation testing
       const sessionToken = generateToken();
-      
-      // Update user with session token
+      const sessionId = `sess_${result.id}_${Date.now()}`;
+      const csrfToken = generateToken();
+      const correlationId = generateToken();
+
+      // Update user with all session tokens for validation
       await env.DB.prepare(
-        'UPDATE users SET session_token = ? WHERE id = ?'
-      ).bind(sessionToken, result.id).run();
-  
+        'UPDATE users SET session_token = ?, session_id = ?, csrf_token = ?, correlation_id = ? WHERE id = ?'
+      ).bind(sessionToken, sessionId, csrfToken, correlationId, result.id).run();
+
       return new Response(JSON.stringify({
         success: true,
         user_id: result.id,
         username: result.username,
         email: result.email,
         session_token: sessionToken,
-        session_id: `sess_${result.id}_${Date.now()}`, // Additional session ID for payload correlation
-        csrf_token: generateToken(), // CSRF token for payload correlation
+        session_id: sessionId, // Additional session ID for payload correlation
+        csrf_token: csrfToken, // CSRF token for payload correlation
         expires_in: 3600,
         server_timestamp: new Date().toISOString(),
-        correlation_id: generateToken() // Correlation ID that should be sent back in requests
+        correlation_id: correlationId // Correlation ID that should be sent back in requests
       }), {
-        headers: { 
-          ...corsHeaders, 
+        headers: {
+          ...corsHeaders,
           'Content-Type': 'application/json',
-          'Set-Cookie': `session_id=sess_${result.id}_${Date.now()}; Path=/; HttpOnly; SameSite=Lax` // Cookie-based session
+          'Set-Cookie': `session_id=${sessionId}; Path=/; HttpOnly; SameSite=Lax` // Cookie-based session
         }
       });
     } catch (error) {
@@ -305,29 +308,29 @@ export default {
   async function handleGetProfile(request, env, corsHeaders) {
     try {
       const body = await request.json();
-      const { session_token, user_id, correlation_id } = body;
-  
-      // Require session data in request body instead of headers
-      if (!session_token || !user_id || !correlation_id) {
-        return new Response(JSON.stringify({ 
+      const { session_token, user_id, correlation_id, session_id, csrf_token } = body;
+
+      // Require ALL session data in request body for correlation testing
+      if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token) {
+        return new Response(JSON.stringify({
           error: 'Missing required fields',
-          required: ['session_token', 'user_id', 'correlation_id'],
-          message: 'Session data must be provided in request body for correlation testing'
+          required: ['session_token', 'user_id', 'correlation_id', 'session_id', 'csrf_token'],
+          message: 'All session data must be provided in request body for correlation testing'
         }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
-  
-      // Validate session token from request body
+
+      // Validate ALL session tokens from request body
       const user = await env.DB.prepare(
-        'SELECT id, username, email FROM users WHERE session_token = ? AND id = ?'
-      ).bind(session_token, user_id).first();
-  
+        'SELECT id, username, email FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?'
+      ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
+
       if (!user) {
-        return new Response(JSON.stringify({ 
+        return new Response(JSON.stringify({
           error: 'Invalid session data',
-          message: 'Session token, user ID, or correlation ID mismatch'
+          message: 'One or more session tokens are invalid or mismatched (session_token, user_id, session_id, csrf_token, or correlation_id)'
         }), {
           status: 401,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -376,20 +379,22 @@ export default {
   async function handleAddToCart(request, env, corsHeaders) {
     try {
       const body = await request.json();
-      const { product_id, quantity = 1, session_token, user_id, correlation_id, client_session_id } = body;
+      const { product_id, quantity = 1, session_token, user_id, correlation_id, session_id, csrf_token, client_session_id } = body;
 
-      // Require session data in request body for JMeter correlation testing
-      if (!session_token || !user_id || !correlation_id) {
-        return new Response(JSON.stringify({ 
+      // Require ALL session data in request body for JMeter correlation testing
+      if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token) {
+        return new Response(JSON.stringify({
           error: 'Missing required session fields in request body',
-          required: ['session_token', 'user_id', 'correlation_id'],
+          required: ['session_token', 'user_id', 'correlation_id', 'session_id', 'csrf_token'],
           message: 'All session data must be provided in request body for JMeter correlation testing',
           example: {
             "product_id": 1,
             "quantity": 1,
             "session_token": "tok_...",
             "user_id": 1,
-            "correlation_id": "tok_..."
+            "correlation_id": "tok_...",
+            "session_id": "sess_...",
+            "csrf_token": "tok_..."
           }
         }), {
           status: 400,
@@ -415,15 +420,15 @@ export default {
         });
       }
   
-      // Validate session token and user ID from request body
+      // Validate ALL session tokens from request body
       const user = await env.DB.prepare(
-        'SELECT id, username FROM users WHERE session_token = ? AND id = ?'
-      ).bind(session_token, user_id).first();
+        'SELECT id, username FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?'
+      ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
 
       if (!user) {
-        return new Response(JSON.stringify({ 
+        return new Response(JSON.stringify({
           error: 'Invalid session data in request body',
-          message: 'Session token and user ID combination is invalid' 
+          message: 'One or more session tokens are invalid or mismatched (session_token, user_id, session_id, csrf_token, or correlation_id)'
         }), {
           status: 401,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -600,37 +605,40 @@ export default {
   async function handleProcessCheckout(request, env, corsHeaders) {
     try {
       const body = await request.json();
-      const { 
-        session_token, 
-        user_id, 
-        correlation_id, 
-        checkout_token, 
-        cart_items, 
+      const {
+        session_token,
+        user_id,
+        correlation_id,
+        session_id,
+        csrf_token,
+        checkout_token,
+        cart_items,
         payment_method = "credit_card",
         billing_address,
-        shipping_address 
+        shipping_address
       } = body;
-  
+
       // Require all correlation data in request body
-      if (!session_token || !user_id || !correlation_id || !checkout_token) {
-        return new Response(JSON.stringify({ 
+      if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token || !checkout_token) {
+        return new Response(JSON.stringify({
           error: 'Missing required checkout fields in request body',
-          required: ['session_token', 'user_id', 'correlation_id', 'checkout_token'],
+          required: ['session_token', 'user_id', 'correlation_id', 'session_id', 'csrf_token', 'checkout_token'],
           message: 'All session and checkout data must be provided in request body'
         }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
-  
-      // Validate session
+
+      // Validate ALL session tokens
       const user = await env.DB.prepare(
-        'SELECT id, username FROM users WHERE session_token = ? AND id = ?'
-      ).bind(session_token, user_id).first();
-  
+        'SELECT id, username FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?'
+      ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
+
       if (!user) {
-        return new Response(JSON.stringify({ 
-          error: 'Invalid session data in checkout request body'
+        return new Response(JSON.stringify({
+          error: 'Invalid session data in checkout request body',
+          message: 'One or more session tokens are invalid or mismatched'
         }), {
           status: 401,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -801,11 +809,11 @@ export default {
   async function handleHttpTest(request, env, corsHeaders) {
     try {
       const body = await request.json();
-      const { session_token, user_id, correlation_id, test_message } = body;
+      const { session_token, user_id, correlation_id, session_id, csrf_token, test_message } = body;
 
-      // Require session data in request body for JMeter correlation testing
-      if (!session_token || !user_id || !correlation_id) {
-        return new Response('HTTP 400 - Missing required session fields in request body\n\nRequired: session_token, user_id, correlation_id\n\nExample:\n{\n  "session_token": "tok_...",\n  "user_id": 1,\n  "correlation_id": "tok_...",\n  "test_message": "Hello from JMeter!"\n}', {
+      // Require ALL session data in request body for JMeter correlation testing
+      if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token) {
+        return new Response('HTTP 400 - Missing required session fields in request body\n\nRequired: session_token, user_id, correlation_id, session_id, csrf_token\n\nExample:\n{\n  "session_token": "tok_...",\n  "user_id": 1,\n  "correlation_id": "tok_...",\n  "session_id": "sess_...",\n  "csrf_token": "tok_...",\n  "test_message": "Hello from JMeter!"\n}', {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
         });
@@ -819,13 +827,13 @@ export default {
         });
       }
 
-      // Validate session token and user ID from request body
+      // Validate ALL session tokens from request body
       const user = await env.DB.prepare(
-        'SELECT id, username FROM users WHERE session_token = ? AND id = ?'
-      ).bind(session_token, user_id).first();
+        'SELECT id, username FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?'
+      ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
 
       if (!user) {
-        return new Response('HTTP 401 - Invalid session data in request body\n\nSession token and user ID combination is invalid', {
+        return new Response('HTTP 401 - Invalid session data in request body\n\nOne or more session tokens are invalid or mismatched (session_token, user_id, session_id, csrf_token, or correlation_id)', {
           status: 401,
           headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
         });
@@ -898,11 +906,11 @@ Next Steps:
   async function handleHttpTestStep2(request, env, corsHeaders) {
     try {
       const body = await request.json();
-      const { session_token, user_id, correlation_id, step2_token, test_message } = body;
+      const { session_token, user_id, correlation_id, session_id, csrf_token, step2_token, test_message } = body;
 
-      // Require session data AND step2_token from step 1
-      if (!session_token || !user_id || !correlation_id || !step2_token) {
-        return new Response('HTTP 400 - Missing required fields for Step 2\n\nRequired: session_token, user_id, correlation_id, step2_token\n\n⚠️  step2_token MUST be extracted from Step 1 response!\n\nExample:\n{\n  "session_token": "tok_...",\n  "user_id": 1,\n  "correlation_id": "tok_...",\n  "step2_token": "tok_...",\n  "test_message": "Step 2 from JMeter!"\n}', {
+      // Require ALL session data AND step2_token from step 1
+      if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token || !step2_token) {
+        return new Response('HTTP 400 - Missing required fields for Step 2\n\nRequired: session_token, user_id, correlation_id, session_id, csrf_token, step2_token\n\n⚠️  step2_token MUST be extracted from Step 1 response!\n\nExample:\n{\n  "session_token": "tok_...",\n  "user_id": 1,\n  "correlation_id": "tok_...",\n  "session_id": "sess_...",\n  "csrf_token": "tok_...",\n  "step2_token": "tok_...",\n  "test_message": "Step 2 from JMeter!"\n}', {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
         });
@@ -916,13 +924,13 @@ Next Steps:
         });
       }
 
-      // Validate session token and user ID from request body
+      // Validate ALL session tokens from request body
       const user = await env.DB.prepare(
-        'SELECT id, username FROM users WHERE session_token = ? AND id = ?'
-      ).bind(session_token, user_id).first();
+        'SELECT id, username FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?'
+      ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
 
       if (!user) {
-        return new Response('HTTP 401 - Invalid session data in request body\n\nSession token and user ID combination is invalid', {
+        return new Response('HTTP 401 - Invalid session data in request body\n\nOne or more session tokens are invalid or mismatched (session_token, user_id, session_id, csrf_token, or correlation_id)', {
           status: 401,
           headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
         });
@@ -1113,28 +1121,32 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       window.addToCart = function(productId) {
           // Get all session-related data from localStorage
           const token = localStorage.getItem('session_token');
+          const sessionId = localStorage.getItem('session_id');
+          const csrfToken = localStorage.getItem('csrf_token');
           const userId = localStorage.getItem('user_id');
           const correlationId = localStorage.getItem('correlation_id');
-          const sessionId = localStorage.getItem('session_id');
-          
+
           console.log('Debug - Session data:', {
               token: token ? token.substring(0, 20) + '...' : 'missing',
+              sessionId: sessionId ? sessionId.substring(0, 20) + '...' : 'missing',
+              csrfToken: csrfToken ? csrfToken.substring(0, 20) + '...' : 'missing',
               userId: userId,
-              correlationId: correlationId ? correlationId.substring(0, 20) + '...' : 'missing',
-              sessionId: sessionId
+              correlationId: correlationId ? correlationId.substring(0, 20) + '...' : 'missing'
           });
-          
-          if (!token || !userId || !correlationId) {
-              alert('❌ Missing session data! Please login first to get all required correlation IDs.\\n\\nRequired: session_token, user_id, correlation_id');
+
+          if (!token || !sessionId || !csrfToken || !userId || !correlationId) {
+              alert('❌ Missing session data! Please login first to get all required tokens.\\n\\nRequired: session_token, session_id, csrf_token, correlation_id, user_id');
               return;
           }
-          
+
           // Make actual API call with ALL authentication data in the body
           const quantity = 1;
           const requestPayload = {
               product_id: productId,
               quantity: quantity,
               session_token: token,
+              session_id: sessionId,
+              csrf_token: csrfToken,
               user_id: parseInt(userId),
               correlation_id: correlationId,
               client_session_id: sessionId,
@@ -1270,30 +1282,37 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       
       async function testAuthenticatedRequest() {
           const token = localStorage.getItem('session_token');
-          if (!token) {
-              alert('No session token found. Please login first.');
+          const sessionId = localStorage.getItem('session_id');
+          const csrfToken = localStorage.getItem('csrf_token');
+          const correlationId = localStorage.getItem('correlation_id');
+          const userId = localStorage.getItem('user_id');
+
+          if (!token || !sessionId || !csrfToken || !correlationId || !userId) {
+              alert('Missing session data. Please login to get all required tokens.');
               return;
           }
-          
+
           try {
               const response = await fetch('/api/user/profile', {
-                  method: 'POST', // Changed to POST for body data
+                  method: 'POST',
                   headers: {
                       'Content-Type': 'application/json'
-                      // No Authorization header - using body instead!
+                      // No Authorization header - all auth data in body!
                   },
                   body: JSON.stringify({
                       session_token: token,
-                      user_id: parseInt(localStorage.getItem('user_id') || '1'),
-                      correlation_id: localStorage.getItem('correlation_id')
+                      session_id: sessionId,
+                      csrf_token: csrfToken,
+                      correlation_id: correlationId,
+                      user_id: parseInt(userId)
                   })
               });
-              
+
               const data = await response.json();
-              
+
               document.getElementById('result').innerHTML += \`
                   <div style="background: #d1ecf1; padding: 15px; border-radius: 5px; margin-top: 15px;">
-                      <h4>🔐 Authenticated Request Result:</h4>
+                      <h4>🔐 Authenticated Request Result (4-Token Validation):</h4>
                       <pre>\${JSON.stringify(data, null, 2)}</pre>
                   </div>
               \`;
@@ -1398,25 +1417,38 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       
       async function testProfile() {
           const token = localStorage.getItem('session_token');
-          if (!token) {
-              showResult('error', 'No session token found. Please login first.');
+          const userId = localStorage.getItem('user_id');
+          const correlationId = localStorage.getItem('correlation_id');
+          const sessionId = localStorage.getItem('session_id');
+          const csrfToken = localStorage.getItem('csrf_token');
+
+          if (!token || !userId || !correlationId || !sessionId || !csrfToken) {
+              showResult('error', 'Missing session data. Please login to get all required tokens (session_token, session_id, csrf_token, correlation_id, user_id).');
               return;
           }
-          
+
           try {
-              showResult('info', 'Testing GET /api/user/profile with session token...');
-              
+              showResult('info', 'Testing POST /api/user/profile with all 4 tokens in request body...');
+
               const response = await fetch('/api/user/profile', {
+                  method: 'POST',
                   headers: {
-                      'Authorization': 'Bearer ' + token,
                       'Content-Type': 'application/json'
-                  }
+                      // NO Authorization header - all auth data in body!
+                  },
+                  body: JSON.stringify({
+                      session_token: token,
+                      session_id: sessionId,
+                      csrf_token: csrfToken,
+                      correlation_id: correlationId,
+                      user_id: parseInt(userId)
+                  })
               });
-              
+
               const data = await response.json();
-              
+
               if (response.ok) {
-                  showResult('success', 'Profile request successful!', data);
+                  showResult('success', 'Profile request successful with 4-token validation!', data);
               } else {
                   showResult('error', 'Profile request failed: ' + data.error, data);
               }
@@ -1474,37 +1506,40 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           const userId = localStorage.getItem('user_id');
           const correlationId = localStorage.getItem('correlation_id');
           const sessionId = localStorage.getItem('session_id');
-          
-          if (!token || !userId || !correlationId) {
-              showResult('error', 'Missing session data. Please login to get all required correlation IDs.');
+          const csrfToken = localStorage.getItem('csrf_token');
+
+          if (!token || !userId || !correlationId || !sessionId || !csrfToken) {
+              showResult('error', 'Missing session data. Please login to get all required tokens (session_token, session_id, csrf_token, correlation_id, user_id).');
               return;
           }
-          
+
           try {
-              showResult('info', 'Testing POST /api/cart/add with session data in request body...');
-              
+              showResult('info', 'Testing POST /api/cart/add with all 4 tokens in request body...');
+
               const response = await fetch('/api/cart/add', {
                   method: 'POST',
                   headers: {
                       'Content-Type': 'application/json'
-                      // NO Authorization header!
+                      // NO Authorization header - all auth data in body!
                   },
                   body: JSON.stringify({
                       product_id: 1, // Test with product 1
                       quantity: 1,
                       session_token: token,
-                      user_id: parseInt(userId),
+                      session_id: sessionId,
+                      csrf_token: csrfToken,
                       correlation_id: correlationId,
+                      user_id: parseInt(userId),
                       client_session_id: sessionId,
                       client_request_id: 'dashboard_test_' + Date.now(),
                       timestamp: new Date().toISOString()
                   })
               });
-              
+
               const data = await response.json();
-              
+
               if (response.ok) {
-                  showResult('success', 'Cart add request successful using body authentication!', data);
+                  showResult('success', 'Cart add request successful with 4-token validation!', data);
               } else {
                   showResult('error', 'Cart add request failed: ' + data.error, data);
               }
@@ -1518,15 +1553,16 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           const userId = localStorage.getItem('user_id');
           const correlationId = localStorage.getItem('correlation_id');
           const sessionId = localStorage.getItem('session_id');
-          
-          if (!token || !userId || !correlationId) {
-              showResult('error', 'Missing session data. Please login to get all required correlation IDs.');
+          const csrfToken = localStorage.getItem('csrf_token');
+
+          if (!token || !userId || !correlationId || !sessionId || !csrfToken) {
+              showResult('error', 'Missing session data. Please login to get all required tokens (session_token, session_id, csrf_token, correlation_id, user_id).');
               return;
           }
-          
+
           try {
-              showResult('info', 'Testing POST /api/http-test with session data in request body (HTTP response, not JSON)...');
-              
+              showResult('info', 'Testing POST /api/http-test with all 4 tokens in request body (HTTP response, not JSON)...');
+
               const response = await fetch('/api/http-test', {
                   method: 'POST',
                   headers: {
@@ -1535,8 +1571,10 @@ Congratulations! Your JMeter correlation is working perfectly!`;
                   },
                   body: JSON.stringify({
                       session_token: token,
-                      user_id: parseInt(userId),
+                      session_id: sessionId,
+                      csrf_token: csrfToken,
                       correlation_id: correlationId,
+                      user_id: parseInt(userId),
                       client_session_id: sessionId,
                       test_message: 'Dashboard HTTP Test - ' + new Date().toLocaleString(),
                       client_request_id: 'http_test_' + Date.now(),
@@ -1586,21 +1624,22 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           const userId = localStorage.getItem('user_id');
           const correlationId = localStorage.getItem('correlation_id');
           const sessionId = localStorage.getItem('session_id');
+          const csrfToken = localStorage.getItem('csrf_token');
           const step2Token = localStorage.getItem('step2_token');
-          
-          if (!token || !userId || !correlationId) {
-              showResult('error', 'Missing session data. Please login to get all required correlation IDs.');
+
+          if (!token || !userId || !correlationId || !sessionId || !csrfToken) {
+              showResult('error', 'Missing session data. Please login to get all required tokens (session_token, session_id, csrf_token, correlation_id, user_id).');
               return;
           }
-          
+
           if (!step2Token) {
               showResult('error', 'Missing Step 2 token! Please run Step 1 first to extract the Step 2 token from the response.');
               return;
           }
-          
+
           try {
-              showResult('info', 'Testing POST /api/http-test-step2 with session data + Step 2 token (multi-step correlation)...');
-              
+              showResult('info', 'Testing POST /api/http-test-step2 with all 4 tokens + Step 2 token (multi-step correlation)...');
+
               const response = await fetch('/api/http-test-step2', {
                   method: 'POST',
                   headers: {
@@ -1609,8 +1648,10 @@ Congratulations! Your JMeter correlation is working perfectly!`;
                   },
                   body: JSON.stringify({
                       session_token: token,
-                      user_id: parseInt(userId),
+                      session_id: sessionId,
+                      csrf_token: csrfToken,
                       correlation_id: correlationId,
+                      user_id: parseInt(userId),
                       client_session_id: sessionId,
                       step2_token: step2Token,
                       test_message: 'Dashboard Step 2 Test - ' + new Date().toLocaleString(),
@@ -1805,17 +1846,21 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       
       async function processCheckout() {
           const sessionToken = localStorage.getItem('session_token');
+          const sessionId = localStorage.getItem('session_id');
+          const csrfToken = localStorage.getItem('csrf_token');
           const userId = localStorage.getItem('user_id');
           const correlationId = localStorage.getItem('correlation_id');
           const checkoutToken = localStorage.getItem('next_step_token') || 'checkout_' + Date.now();
-          
-          if (!sessionToken || !userId || !correlationId) {
-              alert('❌ Missing session data! Please login first to get all required correlation IDs.');
+
+          if (!sessionToken || !sessionId || !csrfToken || !userId || !correlationId) {
+              alert('❌ Missing session data! Please login first to get all required tokens (session_token, session_id, csrf_token, correlation_id, user_id).');
               return;
           }
-          
+
           const checkoutData = {
               session_token: sessionToken,           // Required in body!
+              session_id: sessionId,                 // Required in body!
+              csrf_token: csrfToken,                 // Required in body!
               user_id: parseInt(userId),             // Required in body!
               correlation_id: correlationId,         // Required in body!
               checkout_token: checkoutToken,         // Required in body!
@@ -2059,28 +2104,32 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       window.addToCart = function(productId) {
           // Get all session-related data from localStorage
           const token = localStorage.getItem('session_token');
+          const sessionId = localStorage.getItem('session_id');
+          const csrfToken = localStorage.getItem('csrf_token');
           const userId = localStorage.getItem('user_id');
           const correlationId = localStorage.getItem('correlation_id');
-          const sessionId = localStorage.getItem('session_id');
-          
+
           console.log('Debug - Session data:', {
               token: token ? token.substring(0, 20) + '...' : 'missing',
+              sessionId: sessionId ? sessionId.substring(0, 20) + '...' : 'missing',
+              csrfToken: csrfToken ? csrfToken.substring(0, 20) + '...' : 'missing',
               userId: userId,
-              correlationId: correlationId ? correlationId.substring(0, 20) + '...' : 'missing',
-              sessionId: sessionId
+              correlationId: correlationId ? correlationId.substring(0, 20) + '...' : 'missing'
           });
-          
-          if (!token || !userId || !correlationId) {
-              alert('❌ Missing session data! Please login first to get all required correlation IDs.\\n\\nRequired: session_token, user_id, correlation_id');
+
+          if (!token || !sessionId || !csrfToken || !userId || !correlationId) {
+              alert('❌ Missing session data! Please login first to get all required tokens.\\n\\nRequired: session_token, session_id, csrf_token, correlation_id, user_id');
               return;
           }
-          
+
           // Make actual API call with ALL authentication data in the body
           const quantity = 1;
           const requestPayload = {
               product_id: productId,
               quantity: quantity,
               session_token: token,
+              session_id: sessionId,
+              csrf_token: csrfToken,
               user_id: parseInt(userId),
               correlation_id: correlationId,
               client_session_id: sessionId,
