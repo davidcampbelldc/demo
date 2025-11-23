@@ -40,10 +40,15 @@ export default {
             });
   
           case path === '/dashboard' && method === 'GET':
-            return new Response(getDashboardPage(), { 
-              headers: { ...corsHeaders, 'Content-Type': 'text/html' } 
+            return new Response(getDashboardPage(), {
+              headers: { ...corsHeaders, 'Content-Type': 'text/html' }
             });
-  
+
+          case path === '/dashboard1' && method === 'GET':
+            return new Response(getDashboard1Page(), {
+              headers: { ...corsHeaders, 'Content-Type': 'text/html' }
+            });
+
           case path === '/api/login' && method === 'POST':
             return await handleLogin(request, env, corsHeaders);
   
@@ -81,6 +86,12 @@ export default {
 
           case path === '/api/http-test-step2' && method === 'POST':
             return await handleHttpTestStep2(request, env, corsHeaders);
+
+          case path === '/api/dashboard1/step1' && method === 'POST':
+            return await handleDashboard1Step1(request, env, corsHeaders);
+
+          case path === '/api/dashboard1/step2' && method === 'POST':
+            return await handleDashboard1Step2(request, env, corsHeaders);
 
           default:
             return new Response('Not Found', { 
@@ -1006,6 +1017,177 @@ Congratulations! Your JMeter correlation is working perfectly!`;
     }
   }
 
+  // Dashboard1 API Handlers - Short value correlation testing
+  async function handleDashboard1Step1(request, env, corsHeaders) {
+    try {
+      const body = await request.json();
+      const { session_token, user_id } = body;
+
+      // Simple authentication - only require session_token and user_id
+      if (!session_token || !user_id) {
+        return new Response(JSON.stringify({
+          error: 'Missing required fields',
+          required: ['session_token', 'user_id'],
+          hint: 'This endpoint requires minimal session data for simplified testing'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Check if database is available
+      if (!env.DB) {
+        return new Response(JSON.stringify({
+          error: 'Database not available'
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Validate session token
+      const user = await env.DB.prepare(
+        'SELECT id, username FROM users WHERE session_token = ? AND id = ?'
+      ).bind(session_token, user_id).first();
+
+      if (!user) {
+        return new Response(JSON.stringify({
+          error: 'Invalid session',
+          hint: 'Session token or user_id is invalid'
+        }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Generate a SHORT shortID for correlation testing (1-2 digit numbers)
+      // This is the key difference - testing correlation with very short values
+      const shortID = (Math.floor(Math.random() * 9) + 1).toString(); // "1" through "9"
+      const timestamp = new Date().toISOString();
+
+      // Return JSON response with short shortID
+      return new Response(JSON.stringify({
+        success: true,
+        message: 'Step 1 completed - shortID generated',
+        shortID: shortID, // Short value like "1", "2", "3"
+        username: user.username,
+        user_id: user.id,
+        timestamp: timestamp,
+        hint: 'Use this shortID in Step 2 request'
+      }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+          'X-ShortID': shortID, // Also in header for multiple extraction options
+          'X-Timestamp': timestamp
+        }
+      });
+    } catch (error) {
+      console.error('Error in handleDashboard1Step1:', error);
+      return new Response(JSON.stringify({
+        error: 'Internal server error',
+        message: error.message
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
+  async function handleDashboard1Step2(request, env, corsHeaders) {
+    try {
+      const body = await request.json();
+      const { session_token, user_id, shortID } = body;
+
+      // Require session data AND shortID from step 1
+      if (!session_token || !user_id || !shortID) {
+        return new Response(JSON.stringify({
+          error: 'Missing required fields',
+          required: ['session_token', 'user_id', 'shortID'],
+          hint: 'shortID must be extracted from Step 1 response'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Check if database is available
+      if (!env.DB) {
+        return new Response(JSON.stringify({
+          error: 'Database not available'
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Validate session token
+      const user = await env.DB.prepare(
+        'SELECT id, username FROM users WHERE session_token = ? AND id = ?'
+      ).bind(session_token, user_id).first();
+
+      if (!user) {
+        return new Response(JSON.stringify({
+          error: 'Invalid session',
+          hint: 'Session token or user_id is invalid'
+        }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Validate shortID format (should be 1-2 digit number)
+      if (!/^[0-9]{1,2}$/.test(shortID)) {
+        return new Response(JSON.stringify({
+          error: 'Invalid shortID format',
+          received: shortID,
+          expected: 'Single digit number (1-9)',
+          hint: 'shortID must be extracted from Step 1 response'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const timestamp = new Date().toISOString();
+      const finalID = (Math.floor(Math.random() * 90) + 10).toString(); // "10" through "99"
+
+      // Return success response
+      return new Response(JSON.stringify({
+        success: true,
+        message: 'Step 2 completed - Correlation successful!',
+        username: user.username,
+        user_id: user.id,
+        shortID_received: shortID,
+        shortID_validated: true,
+        finalID: finalID, // Another short value for additional testing
+        timestamp: timestamp,
+        correlation_test: 'PASSED',
+        hint: 'Short value correlation is working correctly'
+      }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+          'X-ShortID-Received': shortID,
+          'X-FinalID': finalID,
+          'X-Timestamp': timestamp,
+          'X-Correlation-Status': 'PASSED'
+        }
+      });
+    } catch (error) {
+      console.error('Error in handleDashboard1Step2:', error);
+      return new Response(JSON.stringify({
+        error: 'Internal server error',
+        message: error.message
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
   // Utility Functions
   function generateToken() {
     return 'tok_' + Math.random().toString(36).substr(2, 16) + Date.now().toString(36);
@@ -1267,6 +1449,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
                       <div style="margin-top: 15px;">
                           <button onclick="testAuthenticatedRequest()" style="background: #28a745; padding: 8px 12px; border: none; border-radius: 3px; color: white; cursor: pointer; margin-right: 10px;">Test Authenticated Request</button>
                           <a href="/dashboard" style="background: #0366d6; color: white; padding: 8px 12px; text-decoration: none; border-radius: 3px;">Go to Dashboard</a>
+                          <a href="/dashboard1" style="background: #667eea; color: white; padding: 8px 12px; text-decoration: none; border-radius: 3px; margin-left: 5px;">Go to Dashboard1</a>
                           <a href="/checkout" style="background: #ffc107; color: black; padding: 8px 12px; text-decoration: none; border-radius: 3px; margin-left: 5px;">Go to Checkout</a>
                       </div>
                   \`;
@@ -1721,7 +1904,206 @@ Congratulations! Your JMeter correlation is working perfectly!`;
   </body>
   </html>`;
   }
-  
+
+  function getDashboard1Page() {
+    return `<!DOCTYPE html>
+  <html>
+  <head>
+      <title>Dashboard1 - Short Value Correlation Test</title>
+      <style>
+          body { font-family: Arial, sans-serif; max-width: 700px; margin: 50px auto; padding: 20px; background: #f9f9f9; }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+          .session-info { background: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #667eea; }
+          .test-section { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+          .step-box { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0; border-left: 3px solid #28a745; }
+          button {
+              background: #667eea;
+              color: white;
+              padding: 12px 24px;
+              border: none;
+              border-radius: 5px;
+              cursor: pointer;
+              font-size: 14px;
+              font-weight: 500;
+              margin: 5px;
+              transition: background 0.3s;
+          }
+          button:hover { background: #5568d3; }
+          button:disabled { background: #ccc; cursor: not-allowed; }
+          .btn-step2 { background: #28a745; }
+          .btn-step2:hover { background: #218838; }
+          .success { background: #d4edda; color: #155724; padding: 12px; border-radius: 5px; margin: 10px 0; border-left: 4px solid #28a745; }
+          .error { background: #f8d7da; color: #721c24; padding: 12px; border-radius: 5px; margin: 10px 0; border-left: 4px solid #dc3545; }
+          .info { background: #d1ecf1; color: #0c5460; padding: 12px; border-radius: 5px; margin: 10px 0; border-left: 4px solid #17a2b8; }
+          pre { background: #f8f9fa; padding: 10px; border-radius: 3px; overflow-x: auto; font-size: 12px; }
+          .highlight { background: #fff3cd; padding: 2px 6px; border-radius: 3px; font-weight: bold; color: #856404; }
+          a { color: #667eea; text-decoration: none; }
+          a:hover { text-decoration: underline; }
+          .nav-links { margin-top: 20px; padding-top: 20px; border-top: 2px solid #e9ecef; }
+      </style>
+  </head>
+  <body>
+      <div class="header">
+          <h2>🎯 Dashboard1 - Short Value Correlation Test</h2>
+          <p style="margin: 5px 0; opacity: 0.9;">Simplified flow for testing JMeter correlation with short dynamic values</p>
+      </div>
+
+      <div class="session-info" id="session-info">
+          <h3>Session Information</h3>
+          <p>Loading session data...</p>
+      </div>
+
+      <div class="test-section">
+          <h3>📋 Test Flow Overview</h3>
+          <p>This dashboard tests correlation with <strong>short values</strong> (like "1", "2", "3") instead of long tokens.</p>
+
+          <div class="step-box">
+              <h4>Step 1: Get Dynamic shortID</h4>
+              <p>Call <code>POST /api/dashboard1/step1</code> to receive a short dynamic ID (1-9)</p>
+              <button onclick="runStep1()">▶ Run Step 1</button>
+          </div>
+
+          <div class="step-box">
+              <h4>Step 2: Use Dynamic shortID</h4>
+              <p>Call <code>POST /api/dashboard1/step2</code> with the shortID from Step 1</p>
+              <button onclick="runStep2()" class="btn-step2" id="step2Button" disabled>▶ Run Step 2</button>
+              <small style="display: block; margin-top: 5px; color: #666;">Enabled after Step 1 completes</small>
+          </div>
+      </div>
+
+      <div id="test-results"></div>
+
+      <div class="nav-links">
+          <a href="/">← Home</a> |
+          <a href="/login">Login</a> |
+          <a href="/dashboard">Main Dashboard</a>
+      </div>
+
+      <script>
+      let extractedShortID = null;
+
+      // Check for session token on page load
+      window.onload = function() {
+          const token = localStorage.getItem('session_token');
+          const username = localStorage.getItem('username');
+          const userId = localStorage.getItem('user_id');
+
+          if (token && userId) {
+              document.getElementById('session-info').innerHTML = \`
+                  <h3>✅ Active Session</h3>
+                  <p><strong>Username:</strong> \${username || 'Unknown'}</p>
+                  <p><strong>User ID:</strong> \${userId}</p>
+                  <p><strong>Session Token:</strong> <code>\${token.substring(0, 20)}...</code></p>
+                  <p style="color: #28a745; font-weight: bold;">Ready to test!</p>
+              \`;
+          } else {
+              document.getElementById('session-info').innerHTML = \`
+                  <h3>❌ No Active Session</h3>
+                  <p>You need to <a href="/login">login</a> first to test this flow.</p>
+                  <p style="color: #dc3545; font-weight: bold;">Not authenticated</p>
+              \`;
+          }
+      };
+
+      async function runStep1() {
+          const token = localStorage.getItem('session_token');
+          const userId = localStorage.getItem('user_id');
+
+          if (!token || !userId) {
+              showResult('error', 'Missing session data. Please login first.');
+              return;
+          }
+
+          try {
+              showResult('info', '🔄 Running Step 1: Requesting dynamic shortID...');
+
+              const response = await fetch('/api/dashboard1/step1', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      session_token: token,
+                      user_id: parseInt(userId)
+                  })
+              });
+
+              const data = await response.json();
+
+              if (response.ok && data.success) {
+                  // Extract the shortID from response
+                  extractedShortID = data.shortID;
+
+                  // Enable Step 2 button
+                  const step2Button = document.getElementById('step2Button');
+                  if (step2Button) {
+                      step2Button.disabled = false;
+                  }
+
+                  showResult('success', \`✅ Step 1 Completed! Dynamic shortID extracted: <span class="highlight">\${extractedShortID}</span>\`, data);
+              } else {
+                  showResult('error', 'Step 1 failed: ' + (data.error || 'Unknown error'), data);
+              }
+          } catch (error) {
+              showResult('error', 'Network error in Step 1: ' + error.message);
+          }
+      }
+
+      async function runStep2() {
+          const token = localStorage.getItem('session_token');
+          const userId = localStorage.getItem('user_id');
+
+          if (!token || !userId) {
+              showResult('error', 'Missing session data. Please login first.');
+              return;
+          }
+
+          if (!extractedShortID) {
+              showResult('error', 'No shortID available. Please run Step 1 first.');
+              return;
+          }
+
+          try {
+              showResult('info', \`🔄 Running Step 2: Validating shortID "<span class="highlight">\${extractedShortID}</span>"...\`);
+
+              const response = await fetch('/api/dashboard1/step2', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      session_token: token,
+                      user_id: parseInt(userId),
+                      shortID: extractedShortID
+                  })
+              });
+
+              const data = await response.json();
+
+              if (response.ok && data.success) {
+                  showResult('success', \`🎉 Step 2 Completed! Short value correlation test PASSED! Final ID: <span class="highlight">\${data.finalID}</span>\`, data);
+              } else {
+                  showResult('error', 'Step 2 failed: ' + (data.error || 'Unknown error'), data);
+              }
+          } catch (error) {
+              showResult('error', 'Network error in Step 2: ' + error.message);
+          }
+      }
+
+      function showResult(type, message, data = null) {
+          const resultDiv = document.getElementById('test-results');
+          const timestamp = new Date().toLocaleTimeString();
+
+          let html = \`
+              <div class="\${type}">
+                  <strong>[\${timestamp}]</strong> \${message}
+                  \${data ? '<pre>' + JSON.stringify(data, null, 2) + '</pre>' : ''}
+              </div>
+          \`;
+
+          resultDiv.innerHTML = html + resultDiv.innerHTML;
+      }
+      </script>
+  </body>
+  </html>`;
+  }
+
   function getCheckoutPage() {
     return `<!DOCTYPE html>
   <html>
