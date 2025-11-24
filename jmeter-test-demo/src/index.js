@@ -856,6 +856,11 @@ export default {
       const timestamp = new Date().toISOString();
       const serverId = "srv-" + Math.random().toString(36).substr(2, 6);
 
+      // Store the step2Token in the database for validation in Step 2
+      await env.DB.prepare(
+        'UPDATE users SET http_test_step2_token = ?, http_test_step2_token_timestamp = ? WHERE id = ?'
+      ).bind(step2Token, timestamp, user.id).run();
+
       // Return simple HTTP response (not JSON) - perfect for JMeter testing
       const responseText = `HTTP 200 - JMeter HTTP Test Step 1 Successful!
 
@@ -935,9 +940,9 @@ Next Steps:
         });
       }
 
-      // Validate ALL session tokens from request body
+      // Validate ALL session tokens from request body and retrieve stored step2_token
       const user = await env.DB.prepare(
-        'SELECT id, username FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?'
+        'SELECT id, username, http_test_step2_token FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?'
       ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
 
       if (!user) {
@@ -946,6 +951,32 @@ Next Steps:
           headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
         });
       }
+
+      // CRITICAL: Validate that the step2_token matches the one stored in Step 1
+      if (!user.http_test_step2_token) {
+        return new Response('HTTP 400 - Correlation FAILED: No step2_token found\n\n⚠️  You must call /api/http-test (Step 1) first to generate a step2_token!\n\n❌ Correlation Test: FAILED\n❌ Reason: Missing Step 1 execution\n\nPlease run Step 1 first to generate the required step2_token.', {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
+        });
+      }
+
+      if (user.http_test_step2_token !== step2_token) {
+        return new Response(`HTTP 400 - Correlation FAILED: step2_token mismatch\n\n⚠️  The step2_token you provided does not match the one generated in Step 1!\n\n❌ Correlation Test: FAILED\n❌ Expected: ${user.http_test_step2_token.substring(0, 20)}...\n❌ Received: ${step2_token.substring(0, 20)}...\n\nThis means your JMeter correlation extractor is not working correctly.\n\nPlease check:\n1. Did you extract the step2_token from Step 1 response?\n2. Is your Regular Expression Extractor configured correctly?\n3. Are you using the correct variable name in Step 2 request?`, {
+          status: 400,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'text/plain',
+            'X-Correlation-Status': 'FAILED',
+            'X-Expected-Token': user.http_test_step2_token.substring(0, 20),
+            'X-Received-Token': step2_token.substring(0, 20)
+          }
+        });
+      }
+
+      // Clear the stored step2_token after successful validation (prevents reuse)
+      await env.DB.prepare(
+        'UPDATE users SET http_test_step2_token = NULL, http_test_step2_token_timestamp = NULL WHERE id = ?'
+      ).bind(user.id).run();
 
       // Generate step 2 response data
       const step2Id = generateToken();
@@ -1065,6 +1096,11 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       const shortID = (Math.floor(Math.random() * 9) + 1).toString(); // "1" through "9"
       const timestamp = new Date().toISOString();
 
+      // Store the shortID in the database for validation in Step 2
+      await env.DB.prepare(
+        'UPDATE users SET dashboard1_shortid = ?, dashboard1_shortid_timestamp = ? WHERE id = ?'
+      ).bind(shortID, timestamp, user.id).run();
+
       // Return JSON response with short shortID
       return new Response(JSON.stringify({
         success: true,
@@ -1122,9 +1158,9 @@ Congratulations! Your JMeter correlation is working perfectly!`;
         });
       }
 
-      // Validate session token
+      // Validate session token and get stored shortID
       const user = await env.DB.prepare(
-        'SELECT id, username FROM users WHERE session_token = ? AND id = ?'
+        'SELECT id, username, dashboard1_shortid FROM users WHERE session_token = ? AND id = ?'
       ).bind(session_token, user_id).first();
 
       if (!user) {
@@ -1150,8 +1186,40 @@ Congratulations! Your JMeter correlation is working perfectly!`;
         });
       }
 
+      // CRITICAL: Validate that the shortID matches the one stored in Step 1
+      if (!user.dashboard1_shortid) {
+        return new Response(JSON.stringify({
+          error: 'No shortID found',
+          hint: 'You must call Step 1 first to generate a shortID',
+          correlation_test: 'FAILED',
+          reason: 'Missing Step 1 execution'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (user.dashboard1_shortid !== shortID) {
+        return new Response(JSON.stringify({
+          error: 'shortID mismatch - Correlation FAILED',
+          expected: user.dashboard1_shortid,
+          received: shortID,
+          hint: 'The shortID you provided does not match the one generated in Step 1',
+          correlation_test: 'FAILED',
+          reason: 'Incorrect correlation value - JMeter extraction failed or wrong value used'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
       const timestamp = new Date().toISOString();
       const finalID = (Math.floor(Math.random() * 90) + 10).toString(); // "10" through "99"
+
+      // Clear the stored shortID after successful validation (prevents reuse)
+      await env.DB.prepare(
+        'UPDATE users SET dashboard1_shortid = NULL, dashboard1_shortid_timestamp = NULL WHERE id = ?'
+      ).bind(user.id).run();
 
       // Return success response
       return new Response(JSON.stringify({
