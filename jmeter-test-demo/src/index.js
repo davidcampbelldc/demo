@@ -1108,6 +1108,10 @@ Congratulations! Your JMeter correlation is working perfectly!`;
         shortID: shortID, // Short value like "1", "2", "3"
         username: user.username,
         user_id: user.id,
+        session_token: user.session_token,
+        session_id: user.session_id,
+        csrf_token: user.csrf_token,
+        correlation_id: user.correlation_id,
         timestamp: timestamp,
         hint: 'Use this shortID in Step 2 request'
       }), {
@@ -1115,6 +1119,8 @@ Congratulations! Your JMeter correlation is working perfectly!`;
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/json',
+          'X-Session-Token': user.session_token || '',
+          'X-Correlation-Id': user.correlation_id || '',
           'X-ShortID': shortID, // Also in header for multiple extraction options
           'X-Timestamp': timestamp
         }
@@ -1158,9 +1164,9 @@ Congratulations! Your JMeter correlation is working perfectly!`;
         });
       }
 
-      // Validate session token and get stored shortID
+      // Validate session token and get stored shortID + session fields
       const user = await env.DB.prepare(
-        'SELECT id, username, dashboard1_shortid FROM users WHERE session_token = ? AND id = ?'
+        'SELECT id, username, dashboard1_shortid, session_id, csrf_token, correlation_id, session_token FROM users WHERE session_token = ? AND id = ?'
       ).bind(session_token, user_id).first();
 
       if (!user) {
@@ -1601,6 +1607,9 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       <div class="session-info" id="session-info">
           <h3>Session Information</h3>
           <p>Loading session data...</p>
+          <p id="session-warning" style="display:none; color:#b91c1c; font-weight:600; margin-top:8px;">
+            No session token detected. Please login first (Home → Login) to generate fresh tokens. Clear browser storage if you suspect stale data.
+          </p>
       </div>
       
       <div class="auth-test">
@@ -2019,6 +2028,9 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       <div class="session-info" id="session-info">
           <h3>Session Information</h3>
           <p>Loading session data...</p>
+          <p id="session-warning" style="display:none; color:#b91c1c; font-weight:600; margin-top:8px;">
+            No session token detected. Please login first (Home → Login) to generate fresh tokens. Clear browser storage if you suspect stale data.
+          </p>
       </div>
 
       <div class="test-section">
@@ -2050,27 +2062,43 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       <script>
       let extractedShortID = null;
 
-      // Check for session token on page load
-      window.onload = function() {
+      function refreshSessionInfo() {
           const token = localStorage.getItem('session_token');
           const username = localStorage.getItem('username');
           const userId = localStorage.getItem('user_id');
+          const sessionId = localStorage.getItem('session_id');
+          const csrf = localStorage.getItem('csrf_token');
+          const correlationId = localStorage.getItem('correlation_id');
+          const warning = document.getElementById('session-warning');
 
-          if (token && userId) {
+          const hasSession = token && userId && sessionId && csrf && correlationId;
+
+          if (hasSession) {
+              const safe = (label, value) => value ? `<code>${value}</code>` : '<em>missing</em>';
               document.getElementById('session-info').innerHTML = \`
                   <h3>✅ Active Session</h3>
                   <p><strong>Username:</strong> \${username || 'Unknown'}</p>
                   <p><strong>User ID:</strong> \${userId}</p>
-                  <p><strong>Session Token:</strong> <code>\${token.substring(0, 20)}...</code></p>
+                  <p><strong>Session Token:</strong> \${safe('token', token)}</p>
+                  <p><strong>Session ID:</strong> \${safe('session_id', sessionId)}</p>
+                  <p><strong>CSRF Token:</strong> \${safe('csrf_token', csrf)}</p>
+                  <p><strong>Correlation ID:</strong> \${safe('correlation_id', correlationId)}</p>
                   <p style="color: #28a745; font-weight: bold;">Ready to test!</p>
               \`;
+              if (warning) warning.style.display = 'none';
           } else {
               document.getElementById('session-info').innerHTML = \`
                   <h3>❌ No Active Session</h3>
                   <p>You need to <a href="/login">login</a> first to test this flow.</p>
                   <p style="color: #dc3545; font-weight: bold;">Not authenticated</p>
               \`;
+              if (warning) warning.style.display = 'block';
           }
+      }
+
+      // Check for session token on page load
+      window.onload = function() {
+          refreshSessionInfo();
       };
 
       async function runStep1() {
@@ -2079,6 +2107,8 @@ Congratulations! Your JMeter correlation is working perfectly!`;
 
           if (!token || !userId) {
               showResult('error', 'Missing session data. Please login first.');
+              const warning = document.getElementById('session-warning');
+              if (warning) warning.style.display = 'block';
               return;
           }
 
@@ -2099,6 +2129,14 @@ Congratulations! Your JMeter correlation is working perfectly!`;
               if (response.ok && data.success) {
                   // Extract the shortID from response
                   extractedShortID = data.shortID;
+
+                  // Hydrate session tokens from network response to avoid stale localStorage
+                  if (data.session_token) localStorage.setItem('session_token', data.session_token);
+                  if (data.user_id) localStorage.setItem('user_id', data.user_id);
+                  if (data.session_id) localStorage.setItem('session_id', data.session_id);
+                  if (data.csrf_token) localStorage.setItem('csrf_token', data.csrf_token);
+                  if (data.correlation_id) localStorage.setItem('correlation_id', data.correlation_id);
+                  refreshSessionInfo();
 
                   // Enable Step 2 button
                   const step2Button = document.getElementById('step2Button');
@@ -2121,6 +2159,8 @@ Congratulations! Your JMeter correlation is working perfectly!`;
 
           if (!token || !userId) {
               showResult('error', 'Missing session data. Please login first.');
+              const warning = document.getElementById('session-warning');
+              if (warning) warning.style.display = 'block';
               return;
           }
 

@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wrangler d1 execute:*)",
+      "Bash(wrangler deploy:*)",
+      "Bash(curl:*)",
+      "Bash(git config:*)",
+      "Read(//home/dc/.ssh/**)",
+      "Bash(cat:*)",
+      "Bash(ssh:*)",
+      "Read(//home/dc/Dropbox/Cursor/Projects/**)",
+      "Bash(git remote set-url:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
