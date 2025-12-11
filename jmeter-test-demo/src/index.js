@@ -171,7 +171,13 @@ export default {
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/json',
-          'Set-Cookie': `session_id=${sessionId}; Path=/; HttpOnly; SameSite=Lax` // Cookie-based session
+          'Set-Cookie': `session_id=${sessionId}; Path=/; HttpOnly; SameSite=Lax`,
+          // Add tokens to headers for JMeter correlation (in case body isn't captured)
+          'X-Session-Token': sessionToken,
+          'X-Session-Id': sessionId,
+          'X-CSRF-Token': csrfToken,
+          'X-Correlation-Id': correlationId,
+          'X-User-Id': result.id.toString()
         }
       });
     } catch (error) {
@@ -864,11 +870,11 @@ export default {
       // Return simple HTTP response (not JSON) - perfect for JMeter testing
       const responseText = `HTTP 200 - JMeter HTTP Test Step 1 Successful!
 
-🔐 Authentication Method: Request Body Session Data
-📋 Session Token: ${session_token.substring(0, 20)}...
-🆔 User ID: ${user_id}
-🔄 Correlation ID: ${correlation_id.substring(0, 20)}...
-👤 Username: ${user.username}
+[AUTH] Authentication Method: Request Body Session Data
+[INFO] Session Token: ${session_token.substring(0, 20)}...
+[ID] User ID: ${user_id}
+[SYNC] Correlation ID: ${correlation_id.substring(0, 20)}...
+[USER] Username: ${user.username}
 
 🧪 Step 1 Test Details:
 • Test ID: ${testId}
@@ -876,11 +882,11 @@ export default {
 • Timestamp: ${timestamp}
 • Test Message: ${test_message || 'No message provided'}
 
-✅ Session Validation: PASSED
-✅ Database Connection: ACTIVE
-✅ User Authentication: CONFIRMED
+[OK] Session Validation: PASSED
+[OK] Database Connection: ACTIVE
+[OK] User Authentication: CONFIRMED
 
-🎯 STEP 2 REQUIRED - Capture the Step 2 Token below!
+[TARGET] STEP 2 REQUIRED - Capture the Step 2 Token below!
 🔑 STEP 2 TOKEN: ${step2Token}
 
 📝 Response Format: Plain HTTP (not JSON)
@@ -954,14 +960,14 @@ Next Steps:
 
       // CRITICAL: Validate that the step2_token matches the one stored in Step 1
       if (!user.http_test_step2_token) {
-        return new Response('HTTP 400 - Correlation FAILED: No step2_token found\n\n⚠️  You must call /api/http-test (Step 1) first to generate a step2_token!\n\n❌ Correlation Test: FAILED\n❌ Reason: Missing Step 1 execution\n\nPlease run Step 1 first to generate the required step2_token.', {
+        return new Response('HTTP 400 - Correlation FAILED: No step2_token found\n\n⚠️  You must call /api/http-test (Step 1) first to generate a step2_token!\n\n[ERROR] Correlation Test: FAILED\n[ERROR] Reason: Missing Step 1 execution\n\nPlease run Step 1 first to generate the required step2_token.', {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
         });
       }
 
       if (user.http_test_step2_token !== step2_token) {
-        return new Response(`HTTP 400 - Correlation FAILED: step2_token mismatch\n\n⚠️  The step2_token you provided does not match the one generated in Step 1!\n\n❌ Correlation Test: FAILED\n❌ Expected: ${user.http_test_step2_token.substring(0, 20)}...\n❌ Received: ${step2_token.substring(0, 20)}...\n\nThis means your JMeter correlation extractor is not working correctly.\n\nPlease check:\n1. Did you extract the step2_token from Step 1 response?\n2. Is your Regular Expression Extractor configured correctly?\n3. Are you using the correct variable name in Step 2 request?`, {
+        return new Response(`HTTP 400 - Correlation FAILED: step2_token mismatch\n\n⚠️  The step2_token you provided does not match the one generated in Step 1!\n\n[ERROR] Correlation Test: FAILED\n[ERROR] Expected: ${user.http_test_step2_token.substring(0, 20)}...\n[ERROR] Received: ${step2_token.substring(0, 20)}...\n\nThis means your JMeter correlation extractor is not working correctly.\n\nPlease check:\n1. Did you extract the step2_token from Step 1 response?\n2. Is your Regular Expression Extractor configured correctly?\n3. Are you using the correct variable name in Step 2 request?`, {
           status: 400,
           headers: {
             ...corsHeaders,
@@ -987,12 +993,12 @@ Next Steps:
       // Return step 2 HTTP response
       const responseText = `HTTP 200 - JMeter HTTP Test Step 2 Successful!
 
-🔐 Authentication Method: Request Body Session Data + Step 2 Token
-📋 Session Token: ${session_token.substring(0, 20)}...
-🆔 User ID: ${user_id}
-🔄 Correlation ID: ${correlation_id.substring(0, 20)}...
+[AUTH] Authentication Method: Request Body Session Data + Step 2 Token
+[INFO] Session Token: ${session_token.substring(0, 20)}...
+[ID] User ID: ${user_id}
+[SYNC] Correlation ID: ${correlation_id.substring(0, 20)}...
 🔑 Step 2 Token: ${step2_token.substring(0, 20)}...
-👤 Username: ${user.username}
+[USER] Username: ${user.username}
 
 🧪 Step 2 Test Details:
 • Step 2 ID: ${step2Id}
@@ -1000,11 +1006,11 @@ Next Steps:
 • Timestamp: ${timestamp}
 • Test Message: ${test_message || 'No message provided'}
 
-✅ Session Validation: PASSED
-✅ Step 2 Token Validation: PASSED
-✅ Database Connection: ACTIVE
-✅ User Authentication: CONFIRMED
-✅ Multi-Step Correlation: SUCCESSFUL
+[OK] Session Validation: PASSED
+[OK] Step 2 Token Validation: PASSED
+[OK] Database Connection: ACTIVE
+[OK] User Authentication: CONFIRMED
+[OK] Multi-Step Correlation: SUCCESSFUL
 
 🎉 MULTI-STEP CORRELATION COMPLETE!
 🏆 FINAL SUCCESS TOKEN: ${finalToken}
@@ -1012,13 +1018,13 @@ Next Steps:
 📝 Response Format: Plain HTTP (not JSON)
 🔗 Perfect for testing multi-step correlation in JMeter
 
-✅ JMeter Correlation Test Results:
+[OK] JMeter Correlation Test Results:
 • Step 1: Session authentication ✓
 • Step 2: Token extraction ✓
 • Step 2: Token validation ✓
 • Multi-step flow: COMPLETE ✓
 
-🎯 This demonstrates successful multi-step correlation testing!
+[TARGET] This demonstrates successful multi-step correlation testing!
 📊 Both steps required session data in request body
 🔗 Step 2 required token extracted from Step 1 response
 
@@ -1076,9 +1082,9 @@ Congratulations! Your JMeter correlation is working perfectly!`;
         });
       }
 
-      // Validate session token
+      // Validate session token and fetch all session fields for network response
       const user = await env.DB.prepare(
-        'SELECT id, username FROM users WHERE session_token = ? AND id = ?'
+        'SELECT id, username, session_token, session_id, csrf_token, correlation_id FROM users WHERE session_token = ? AND id = ?'
       ).bind(session_token, user_id).first();
 
       if (!user) {
@@ -1391,7 +1397,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           });
 
           if (!token || !sessionId || !csrfToken || !userId || !correlationId) {
-              alert('❌ Missing session data! Please login first to get all required tokens.\\n\\nRequired: session_token, session_id, csrf_token, correlation_id, user_id');
+              alert('[ERROR] Missing session data! Please login first to get all required tokens.\\n\\nRequired: session_token, session_id, csrf_token, correlation_id, user_id');
               return;
           }
 
@@ -1430,14 +1436,14 @@ Congratulations! Your JMeter correlation is working perfectly!`;
                   // Store next step token for future correlation
                   localStorage.setItem('next_step_token', data.next_step_token);
                   
-                  alert(\`✅ Body-Authenticated Success! Added \${data.cart_item.product_name} to cart.\\n\\n🔐 Authentication Method: ALL DATA IN REQUEST BODY\\n📋 Session Token: \${token.substring(0, 20)}...\\n🆔 User ID: \${userId}\\n🔄 Correlation ID: \${correlationId.substring(0, 20)}...\\n\\n📦 Cart Item ID: \${data.cart_item.cart_item_id}\\n👤 User: \${data.cart_item.username}\\n💰 Subtotal: $\${data.cart_item.subtotal}\\n🎯 Next Step Token: \${data.next_step_token}\\n\\n✨ This request used NO Authorization headers - all session/auth data was in the request body for advanced JMeter correlation testing!\`);
+                  alert('[OK] Body-Authenticated Success! Added ' + data.cart_item.product_name + ' to cart.\\n\\n[AUTH] Authentication Method: ALL DATA IN REQUEST BODY\\n[INFO] Session Token: ' + token.substring(0, 20) + '...\\n[ID] User ID: ' + userId + '\\n[SYNC] Correlation ID: ' + correlationId.substring(0, 20) + '...\\n\\n[PACKAGE] Cart Item ID: ' + data.cart_item.cart_item_id + '\\n[USER] User: ' + data.cart_item.username + '\\n[MONEY] Subtotal: $' + data.cart_item.subtotal + '\\n[TARGET] Next Step Token: ' + data.next_step_token + '\\n\\n[SPARKLE] This request used NO Authorization headers - all session/auth data was in the request body for advanced JMeter correlation testing!');
               } else {
-                  alert(\`❌ Error: \${data.error}\\n\\nMessage: \${data.message || 'Unknown error'}\\n\\nMake sure you have all required fields: session_token, user_id, correlation_id\`);
+                  alert('[ERROR] Error: ' + data.error + '\\n\\nMessage: ' + (data.message || 'Unknown error') + '\\n\\nMake sure you have all required fields: session_token, user_id, correlation_id');
               }
           })
           .catch(error => {
               console.error('Cart add error:', error);
-              alert('❌ Network Error: ' + error.message);
+              alert('[ERROR] Network Error: ' + error.message);
           });
       };
       
@@ -1507,33 +1513,32 @@ Congratulations! Your JMeter correlation is working perfectly!`;
                   localStorage.setItem('correlation_id', data.correlation_id);
                   localStorage.setItem('username', data.username);
                   
-                  document.getElementById('result').innerHTML = \`
-                      <h3>✅ Login Successful!</h3>
-                      <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 10px 0;">
-                          <p><strong>Session Token:</strong> <code>\${data.session_token}</code></p>
-                          <p><strong>Session ID:</strong> <code>\${data.session_id}</code></p>
-                          <p><strong>CSRF Token:</strong> <code>\${data.csrf_token}</code></p>
-                          <p><strong>Correlation ID:</strong> <code>\${data.correlation_id}</code></p>
-                          <p><strong>User ID:</strong> \${data.user_id}</p>
-                          <p><strong>Username:</strong> \${data.username}</p>
-                          <p><strong>Email:</strong> \${data.email}</p>
-                          <p><strong>Expires In:</strong> \${data.expires_in} seconds</p>
-                          <p><strong>Server Timestamp:</strong> \${data.server_timestamp}</p>
-                      </div>
-                      <div style="margin-top: 15px;">
-                          <button onclick="testAuthenticatedRequest()" style="background: #28a745; padding: 8px 12px; border: none; border-radius: 3px; color: white; cursor: pointer; margin-right: 10px;">Test Authenticated Request</button>
-                          <a href="/dashboard" style="background: #0366d6; color: white; padding: 8px 12px; text-decoration: none; border-radius: 3px;">Go to Dashboard</a>
-                          <a href="/dashboard1" style="background: #667eea; color: white; padding: 8px 12px; text-decoration: none; border-radius: 3px; margin-left: 5px;">Go to Dashboard1</a>
-                          <a href="/checkout" style="background: #ffc107; color: black; padding: 8px 12px; text-decoration: none; border-radius: 3px; margin-left: 5px;">Go to Checkout</a>
-                      </div>
-                  \`;
+                  document.getElementById('result').innerHTML = 
+                      '<h3>[OK] Login Successful!</h3>' +
+                      '<div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 10px 0;">' +
+                          '<p><strong>Session Token:</strong> <code>' + data.session_token + '</code></p>' +
+                          '<p><strong>Session ID:</strong> <code>' + data.session_id + '</code></p>' +
+                          '<p><strong>CSRF Token:</strong> <code>' + data.csrf_token + '</code></p>' +
+                          '<p><strong>Correlation ID:</strong> <code>' + data.correlation_id + '</code></p>' +
+                          '<p><strong>User ID:</strong> ' + data.user_id + '</p>' +
+                          '<p><strong>Username:</strong> ' + data.username + '</p>' +
+                          '<p><strong>Email:</strong> ' + data.email + '</p>' +
+                          '<p><strong>Expires In:</strong> ' + data.expires_in + ' seconds</p>' +
+                          '<p><strong>Server Timestamp:</strong> ' + data.server_timestamp + '</p>' +
+                      '</div>' +
+                      '<div style="margin-top: 15px;">' +
+                          '<button onclick="testAuthenticatedRequest()" style="background: #28a745; padding: 8px 12px; border: none; border-radius: 3px; color: white; cursor: pointer; margin-right: 10px;">Test Authenticated Request</button>' +
+                          '<a href="/dashboard" style="background: #0366d6; color: white; padding: 8px 12px; text-decoration: none; border-radius: 3px;">Go to Dashboard</a>' +
+                          '<a href="/dashboard1" style="background: #667eea; color: white; padding: 8px 12px; text-decoration: none; border-radius: 3px; margin-left: 5px;">Go to Dashboard1</a>' +
+                          '<a href="/checkout" style="background: #ffc107; color: black; padding: 8px 12px; text-decoration: none; border-radius: 3px; margin-left: 5px;">Go to Checkout</a>' +
+                      '</div>';
               } else {
                   document.getElementById('result').innerHTML = 
-                      '<div style="background: #f8d7da; color: #721c24; padding: 10px; border-radius: 3px;"><h3>❌ Login Failed</h3><pre>' + JSON.stringify(data, null, 2) + '</pre></div>';
+                      '<div style="background: #f8d7da; color: #721c24; padding: 10px; border-radius: 3px;"><h3>[ERROR] Login Failed</h3><pre>' + JSON.stringify(data, null, 2) + '</pre></div>';
               }
           } catch (error) {
               document.getElementById('result').innerHTML = 
-                  '<div style="background: #f8d7da; color: #721c24; padding: 10px; border-radius: 3px;"><h3>❌ Error</h3><pre>' + error.message + '</pre></div>';
+                  '<div style="background: #f8d7da; color: #721c24; padding: 10px; border-radius: 3px;"><h3>[ERROR] Error</h3><pre>' + error.message + '</pre></div>';
           }
       }
       
@@ -1567,12 +1572,11 @@ Congratulations! Your JMeter correlation is working perfectly!`;
 
               const data = await response.json();
 
-              document.getElementById('result').innerHTML += \`
-                  <div style="background: #d1ecf1; padding: 15px; border-radius: 5px; margin-top: 15px;">
-                      <h4>🔐 Authenticated Request Result (4-Token Validation):</h4>
-                      <pre>\${JSON.stringify(data, null, 2)}</pre>
-                  </div>
-              \`;
+              document.getElementById('result').innerHTML += 
+                  '<div style="background: #d1ecf1; padding: 15px; border-radius: 5px; margin-top: 15px;">' +
+                      '<h4>Authenticated Request Result (4-Token Validation):</h4>' +
+                      '<pre>' + JSON.stringify(data, null, 2) + '</pre>' +
+                  '</div>';
           } catch (error) {
               alert('Error testing authenticated request: ' + error.message);
           }
@@ -1602,7 +1606,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       </style>
   </head>
   <body>
-      <h2>🔐 Authenticated Dashboard</h2>
+      <h2>[AUTH] Authenticated Dashboard</h2>
       
       <div class="session-info" id="session-info">
           <h3>Session Information</h3>
@@ -1658,20 +1662,18 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           const username = localStorage.getItem('username');
           
           if (token) {
-              document.getElementById('session-info').innerHTML = \`
-                  <h3>✅ Active Session</h3>
-                  <p><strong>Username:</strong> \${username || 'Unknown'}</p>
-                  <p><strong>Session Token:</strong> <code>\${token}</code></p>
-                  <p><strong>Token Length:</strong> \${token.length} characters</p>
-                  <p><strong>Status:</strong> <span style="color: #28a745; font-weight: bold;">AUTHENTICATED</span></p>
-                  <p><em>This token will be used for authenticated API requests</em></p>
-              \`;
+              document.getElementById('session-info').innerHTML = 
+                  '<h3>[OK] Active Session</h3>' +
+                  '<p><strong>Username:</strong> ' + (username || 'Unknown') + '</p>' +
+                  '<p><strong>Session Token:</strong> <code>' + token + '</code></p>' +
+                  '<p><strong>Token Length:</strong> ' + token.length + ' characters</p>' +
+                  '<p><strong>Status:</strong> <span style="color: #28a745; font-weight: bold;">AUTHENTICATED</span></p>' +
+                  '<p><em>This token will be used for authenticated API requests</em></p>';
           } else {
-              document.getElementById('session-info').innerHTML = \`
-                  <h3>❌ No Active Session</h3>
-                  <p>You need to <a href="/login">login</a> first to access authenticated features.</p>
-                  <p><strong>Status:</strong> <span style="color: #dc3545; font-weight: bold;">NOT AUTHENTICATED</span></p>
-              \`;
+              document.getElementById('session-info').innerHTML = 
+                  '<h3>[ERROR] No Active Session</h3>' +
+                  '<p>You need to <a href="/login">login</a> first to access authenticated features.</p>' +
+                  '<p><strong>Status:</strong> <span style="color: #dc3545; font-weight: bold;">NOT AUTHENTICATED</span></p>';
           }
       };
       
@@ -1954,23 +1956,25 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           showResult('success', 'Session cleared! You are now logged out.');
           
           // Update session info display
-          document.getElementById('session-info').innerHTML = \`
-              <h3>❌ Session Cleared</h3>
-              <p>You have been logged out. <a href="/login">Login again</a> to test authenticated endpoints.</p>
-              <p><strong>Status:</strong> <span style="color: #dc3545; font-weight: bold;">NOT AUTHENTICATED</span></p>
-          \`;
+          document.getElementById('session-info').innerHTML = 
+              '<h3>[ERROR] Session Cleared</h3>' +
+              '<p>You have been logged out. <a href="/login">Login again</a> to test authenticated endpoints.</p>' +
+              '<p><strong>Status:</strong> <span style="color: #dc3545; font-weight: bold;">NOT AUTHENTICATED</span></p>';
       }
       
       function showResult(type, message, data = null) {
           const resultDiv = document.getElementById('test-results');
           const timestamp = new Date().toLocaleTimeString();
           
-          let html = \`<div class="\${type}">
-              <strong>[\${timestamp}] \${message}</strong>
-          \`;
+          let html = '<div class="' + type + '">' +
+              '<strong>[' + timestamp + '] ' + message + '</strong>' +
+          '</div>';
           
           if (data) {
-              html += \`<pre>\${JSON.stringify(data, null, 2)}</pre>\`;
+              html = '<div class="' + type + '">' +
+                  '<strong>[' + timestamp + '] ' + message + '</strong>' +
+                  '<pre>' + JSON.stringify(data, null, 2) + '</pre>' +
+              '</div>';
           }
           
           html += '</div>';
@@ -2021,7 +2025,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
   </head>
   <body>
       <div class="header">
-          <h2>🎯 Dashboard1 - Short Value Correlation Test</h2>
+          <h2>[TARGET] Dashboard1 - Short Value Correlation Test</h2>
           <p style="margin: 5px 0; opacity: 0.9;">Simplified flow for testing JMeter correlation with short dynamic values</p>
       </div>
 
@@ -2034,7 +2038,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       </div>
 
       <div class="test-section">
-          <h3>📋 Test Flow Overview</h3>
+          <h3>[INFO] Test Flow Overview</h3>
           <p>This dashboard tests correlation with <strong>short values</strong> (like "1", "2", "3") instead of long tokens.</p>
 
           <div class="step-box">
@@ -2074,24 +2078,22 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           const hasSession = token && userId && sessionId && csrf && correlationId;
 
           if (hasSession) {
-              const safe = (label, value) => value ? `<code>${value}</code>` : '<em>missing</em>';
-              document.getElementById('session-info').innerHTML = \`
-                  <h3>✅ Active Session</h3>
-                  <p><strong>Username:</strong> \${username || 'Unknown'}</p>
-                  <p><strong>User ID:</strong> \${userId}</p>
-                  <p><strong>Session Token:</strong> \${safe('token', token)}</p>
-                  <p><strong>Session ID:</strong> \${safe('session_id', sessionId)}</p>
-                  <p><strong>CSRF Token:</strong> \${safe('csrf_token', csrf)}</p>
-                  <p><strong>Correlation ID:</strong> \${safe('correlation_id', correlationId)}</p>
-                  <p style="color: #28a745; font-weight: bold;">Ready to test!</p>
-              \`;
+              const safe = (label, value) => value ? '<code>' + value + '</code>' : '<em>missing</em>';
+              document.getElementById('session-info').innerHTML = 
+                  '<h3>[OK] Active Session</h3>' +
+                  '<p><strong>Username:</strong> ' + (username || 'Unknown') + '</p>' +
+                  '<p><strong>User ID:</strong> ' + userId + '</p>' +
+                  '<p><strong>Session Token:</strong> ' + safe('token', token) + '</p>' +
+                  '<p><strong>Session ID:</strong> ' + safe('session_id', sessionId) + '</p>' +
+                  '<p><strong>CSRF Token:</strong> ' + safe('csrf_token', csrf) + '</p>' +
+                  '<p><strong>Correlation ID:</strong> ' + safe('correlation_id', correlationId) + '</p>' +
+                  '<p style="color: #28a745; font-weight: bold;">Ready to test!</p>';
               if (warning) warning.style.display = 'none';
           } else {
-              document.getElementById('session-info').innerHTML = \`
-                  <h3>❌ No Active Session</h3>
-                  <p>You need to <a href="/login">login</a> first to test this flow.</p>
-                  <p style="color: #dc3545; font-weight: bold;">Not authenticated</p>
-              \`;
+              document.getElementById('session-info').innerHTML = 
+                  '<h3>[ERROR] No Active Session</h3>' +
+                  '<p>You need to <a href="/login">login</a> first to test this flow.</p>' +
+                  '<p style="color: #dc3545; font-weight: bold;">Not authenticated</p>';
               if (warning) warning.style.display = 'block';
           }
       }
@@ -2113,7 +2115,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           }
 
           try {
-              showResult('info', '🔄 Running Step 1: Requesting dynamic shortID...');
+              showResult('info', '[SYNC] Running Step 1: Requesting dynamic shortID...');
 
               const response = await fetch('/api/dashboard1/step1', {
                   method: 'POST',
@@ -2144,7 +2146,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
                       step2Button.disabled = false;
                   }
 
-                  showResult('success', \`✅ Step 1 Completed! Dynamic shortID extracted: <span class="highlight">\${extractedShortID}</span>\`, data);
+                  showResult('success', '[OK] Step 1 Completed! Dynamic shortID extracted: <span class="highlight">' + extractedShortID + '</span>', data);
               } else {
                   showResult('error', 'Step 1 failed: ' + (data.error || 'Unknown error'), data);
               }
@@ -2170,7 +2172,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           }
 
           try {
-              showResult('info', \`🔄 Running Step 2: Validating shortID "<span class="highlight">\${extractedShortID}</span>"...\`);
+              showResult('info', '[SYNC] Running Step 2: Validating shortID "<span class="highlight">' + extractedShortID + '</span>"...');
 
               const response = await fetch('/api/dashboard1/step2', {
                   method: 'POST',
@@ -2185,7 +2187,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
               const data = await response.json();
 
               if (response.ok && data.success) {
-                  showResult('success', \`🎉 Step 2 Completed! Short value correlation test PASSED! Final ID: <span class="highlight">\${data.finalID}</span>\`, data);
+                  showResult('success', '[SPARKLE] Step 2 Completed! Short value correlation test PASSED! Final ID: <span class="highlight">' + data.finalID + '</span>', data);
               } else {
                   showResult('error', 'Step 2 failed: ' + (data.error || 'Unknown error'), data);
               }
@@ -2198,12 +2200,11 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           const resultDiv = document.getElementById('test-results');
           const timestamp = new Date().toLocaleTimeString();
 
-          let html = \`
-              <div class="\${type}">
-                  <strong>[\${timestamp}]</strong> \${message}
-                  \${data ? '<pre>' + JSON.stringify(data, null, 2) + '</pre>' : ''}
-              </div>
-          \`;
+          let html = 
+              '<div class="' + type + '">' +
+                  '<strong>[' + timestamp + ']</strong> ' + message +
+                  (data ? '<pre>' + JSON.stringify(data, null, 2) + '</pre>' : '') +
+              '</div>';
 
           resultDiv.innerHTML = html + resultDiv.innerHTML;
       }
@@ -2240,7 +2241,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       </div>
       
       <div class="checkout-section">
-          <h3>📦 Mock Cart Items</h3>
+          <h3>[PACKAGE] Mock Cart Items</h3>
           <div id="cart-summary">
               <p>• Laptop Pro - $1299.99</p>
               <p>• Wireless Mouse - $29.99</p>
@@ -2278,7 +2279,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       </div>
       
       <div class="correlation-info">
-          <h4>🔄 JMeter Correlation Data (will be sent in request body):</h4>
+          <h4>[SYNC] JMeter Correlation Data (will be sent in request body):</h4>
           <div id="correlation-display">Loading correlation data...</div>
       </div>
       
@@ -2302,20 +2303,18 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           const username = localStorage.getItem('username');
           
           if (token && username) {
-              document.getElementById('user-status').innerHTML = \`
-                  <div class="logged-in">
-                      <h3>✅ Logged in as: \${username}</h3>
-                      <p>Ready for authenticated checkout with correlation data!</p>
-                  </div>
-              \`;
+              document.getElementById('user-status').innerHTML = 
+                  '<div class="logged-in">' +
+                      '<h3>[OK] Logged in as: ' + username + '</h3>' +
+                      '<p>Ready for authenticated checkout with correlation data!</p>' +
+                  '</div>';
               document.getElementById('checkoutBtn').disabled = false;
           } else {
-              document.getElementById('user-status').innerHTML = \`
-                  <div class="not-logged-in">
-                      <h3>❌ Not logged in</h3>
-                      <p><a href="/login">Login required</a> to complete checkout with session correlation.</p>
-                  </div>
-              \`;
+              document.getElementById('user-status').innerHTML = 
+                  '<div class="not-logged-in">' +
+                      '<h3>[ERROR] Not logged in</h3>' +
+                      '<p><a href="/login">Login required</a> to complete checkout with session correlation.</p>' +
+                  '</div>';
           }
       }
       
@@ -2325,13 +2324,12 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           const correlationId = localStorage.getItem('correlation_id');
           const checkoutToken = localStorage.getItem('next_step_token') || 'checkout_' + Date.now();
           
-          document.getElementById('correlation-display').innerHTML = \`
-              <p><strong>Session Token:</strong> <code>\${sessionToken ? sessionToken.substring(0, 20) + '...' : 'Not available'}</code></p>
-              <p><strong>User ID:</strong> <code>\${userId || 'Not available'}</code></p>
-              <p><strong>Correlation ID:</strong> <code>\${correlationId || 'Not available'}</code></p>
-              <p><strong>Checkout Token:</strong> <code>\${checkoutToken}</code></p>
-              <p><em>All of this data will be sent in the request body for correlation testing!</em></p>
-          \`;
+          document.getElementById('correlation-display').innerHTML = 
+              '<p><strong>Session Token:</strong> <code>' + (sessionToken ? sessionToken.substring(0, 20) + '...' : 'Not available') + '</code></p>' +
+              '<p><strong>User ID:</strong> <code>' + (userId || 'Not available') + '</code></p>' +
+              '<p><strong>Correlation ID:</strong> <code>' + (correlationId || 'Not available') + '</code></p>' +
+              '<p><strong>Checkout Token:</strong> <code>' + checkoutToken + '</code></p>' +
+              '<p><em>All of this data will be sent in the request body for correlation testing!</em></p>';
       }
       
       async function processCheckout() {
@@ -2343,7 +2341,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           const checkoutToken = localStorage.getItem('next_step_token') || 'checkout_' + Date.now();
 
           if (!sessionToken || !sessionId || !csrfToken || !userId || !correlationId) {
-              alert('❌ Missing session data! Please login first to get all required tokens (session_token, session_id, csrf_token, correlation_id, user_id).');
+              alert('[ERROR] Missing session data! Please login first to get all required tokens (session_token, session_id, csrf_token, correlation_id, user_id).');
               return;
           }
 
@@ -2384,38 +2382,35 @@ Congratulations! Your JMeter correlation is working perfectly!`;
               const result = await response.json();
               
               if (result.success) {
-                  document.getElementById('checkout-result').innerHTML = \`
-                      <div style="background: #d4edda; color: #155724; padding: 20px; border-radius: 5px; margin: 20px 0;">
-                          <h3>🎉 Checkout Successful!</h3>
-                          <p><strong>Order Token:</strong> \${result.order_token}</p>
-                          <p><strong>Confirmation Number:</strong> \${result.confirmation_number}</p>
-                          <p><strong>Transaction ID:</strong> \${result.payment_confirmation.transaction_id}</p>
-                          <p><strong>Tracking Number:</strong> \${result.shipping_info.tracking_number}</p>
-                          <p><strong>Total:</strong> $\${result.total}</p>
-                          <hr>
-                          <h4>✅ Correlation Data Validated:</h4>
-                          <p>Session Token: \${result.correlation_validation.session_token_used}</p>
-                          <p>User ID: \${result.correlation_validation.user_id_confirmed}</p>
-                          <p>Correlation ID: \${result.correlation_validation.correlation_id_received}</p>
-                          <p>Checkout Token: \${result.correlation_validation.checkout_token_validated}</p>
-                      </div>
-                  \`;
+                  document.getElementById('checkout-result').innerHTML = 
+                      '<div style="background: #d4edda; color: #155724; padding: 20px; border-radius: 5px; margin: 20px 0;">' +
+                          '<h3>[SPARKLE] Checkout Successful!</h3>' +
+                          '<p><strong>Order Token:</strong> ' + result.order_token + '</p>' +
+                          '<p><strong>Confirmation Number:</strong> ' + result.confirmation_number + '</p>' +
+                          '<p><strong>Transaction ID:</strong> ' + result.payment_confirmation.transaction_id + '</p>' +
+                          '<p><strong>Tracking Number:</strong> ' + result.shipping_info.tracking_number + '</p>' +
+                          '<p><strong>Total:</strong> $' + result.total + '</p>' +
+                          '<hr>' +
+                          '<h4>[OK] Correlation Data Validated:</h4>' +
+                          '<p>Session Token: ' + result.correlation_validation.session_token_used + '</p>' +
+                          '<p>User ID: ' + result.correlation_validation.user_id_confirmed + '</p>' +
+                          '<p>Correlation ID: ' + result.correlation_validation.correlation_id_received + '</p>' +
+                          '<p>Checkout Token: ' + result.correlation_validation.checkout_token_validated + '</p>' +
+                      '</div>';
               } else {
-                  document.getElementById('checkout-result').innerHTML = \`
-                      <div style="background: #f8d7da; color: #721c24; padding: 15px; border-radius: 5px;">
-                          <h3>❌ Checkout Failed</h3>
-                          <p><strong>Error:</strong> \${result.error}</p>
-                          <p><strong>Message:</strong> \${result.message}</p>
-                      </div>
-                  \`;
+                  document.getElementById('checkout-result').innerHTML = 
+                      '<div style="background: #f8d7da; color: #721c24; padding: 15px; border-radius: 5px;">' +
+                          '<h3>[ERROR] Checkout Failed</h3>' +
+                          '<p><strong>Error:</strong> ' + result.error + '</p>' +
+                          '<p><strong>Message:</strong> ' + result.message + '</p>' +
+                      '</div>';
               }
           } catch (error) {
-              document.getElementById('checkout-result').innerHTML = \`
-                  <div style="background: #f8d7da; color: #721c24; padding: 15px; border-radius: 5px;">
-                      <h3>❌ Network Error</h3>
-                      <p>\${error.message}</p>
-                  </div>
-              \`;
+              document.getElementById('checkout-result').innerHTML = 
+                  '<div style="background: #f8d7da; color: #721c24; padding: 15px; border-radius: 5px;">' +
+                      '<h3>[ERROR] Network Error</h3>' +
+                      '<p>' + error.message + '</p>' +
+                  '</div>';
           }
       }
       
@@ -2478,21 +2473,19 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           const username = localStorage.getItem('username');
           
           if (token && username) {
-              document.getElementById('user-status').innerHTML = \`
-                  <div class="logged-in">
-                      <h3>✅ Logged in as: \${username}</h3>
-                      <p>Session active - you can add items to cart!</p>
-                      <button onclick="logout()" style="background: #dc3545; color: white; padding: 5px 10px; border: none; border-radius: 3px; cursor: pointer; margin-right: 10px;">Logout</button>
-                      <a href="/dashboard" style="background: #28a745; color: white; padding: 5px 10px; text-decoration: none; border-radius: 3px;">Dashboard</a>
-                  </div>
-              \`;
+              document.getElementById('user-status').innerHTML = 
+                  '<div class="logged-in">' +
+                      '<h3>[OK] Logged in as: ' + username + '</h3>' +
+                      '<p>Session active - you can add items to cart!</p>' +
+                      '<button onclick="logout()" style="background: #dc3545; color: white; padding: 5px 10px; border: none; border-radius: 3px; cursor: pointer; margin-right: 10px;">Logout</button>' +
+                      '<a href="/dashboard" style="background: #28a745; color: white; padding: 5px 10px; text-decoration: none; border-radius: 3px;">Dashboard</a>' +
+                  '</div>';
           } else {
-              document.getElementById('user-status').innerHTML = \`
-                  <div class="not-logged-in">
-                      <h3>👤 Not logged in</h3>
-                      <p><a href="/login">Login</a> to add items to cart (session required for authenticated endpoints).</p>
-                  </div>
-              \`;
+              document.getElementById('user-status').innerHTML = 
+                  '<div class="not-logged-in">' +
+                      '<h3>[USER] Not logged in</h3>' +
+                      '<p><a href="/login">Login</a> to add items to cart (session required for authenticated endpoints).</p>' +
+                  '</div>';
           }
       }
       async function loadProduct() {
@@ -2510,23 +2503,21 @@ Congratulations! Your JMeter correlation is working perfectly!`;
               const stockClass = product.stock_status;
               const stockText = product.stock_status.replace('_', ' ').toUpperCase();
               
-              document.getElementById('product-detail').innerHTML = \`
-                  <div class="product-detail">
-                      <h3>\${product.name}</h3>
-                      <p><strong>Category:</strong> \${product.category}</p>
-                      <p class="price">Price: $\${product.price}</p>
-                      <p><strong>Discounted Price:</strong> <span style="color: #28a745;">$\${product.discounted_price.toFixed(2)}</span></p>
-                      <p><strong>Stock:</strong> \${product.stock} available</p>
-                      <p><span class="stock-status \${stockClass}">\${stockText}</span></p>
-                      <p><strong>Product ID:</strong> \${product.id}</p>
-                      <p><strong>Last Updated:</strong> \${new Date(product.last_updated).toLocaleString()}</p>
-                      
-                      <div style="margin-top: 20px;">
-                          <button onclick="window.addToCart(\${product.id})">Add to Cart</button>
-                          <button onclick="checkSimilar('\${product.category}')">View Similar Products</button>
-                      </div>
-                  </div>
-              \`;
+              document.getElementById('product-detail').innerHTML = 
+                  '<div class="product-detail">' +
+                      '<h3>' + product.name + '</h3>' +
+                      '<p><strong>Category:</strong> ' + product.category + '</p>' +
+                      '<p class="price">Price: $' + product.price + '</p>' +
+                      '<p><strong>Discounted Price:</strong> <span style="color: #28a745;">$' + product.discounted_price.toFixed(2) + '</span></p>' +
+                      '<p><strong>Stock:</strong> ' + product.stock + ' available</p>' +
+                      '<p><span class="stock-status ' + stockClass + '">' + stockText + '</span></p>' +
+                      '<p><strong>Product ID:</strong> ' + product.id + '</p>' +
+                      '<p><strong>Last Updated:</strong> ' + new Date(product.last_updated).toLocaleString() + '</p>' +
+                      '<div style="margin-top: 20px;">' +
+                          '<button onclick="window.addToCart(' + product.id + ')">Add to Cart</button>' +
+                          '<button onclick="checkSimilar(\'' + product.category + '\')">View Similar Products</button>' +
+                      '</div>' +
+                  '</div>';
           } catch (error) {
               document.getElementById('product-detail').innerHTML = 
                   '<div style="color: red;">Error loading product: ' + error.message + '</div>';
@@ -2608,7 +2599,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           });
 
           if (!token || !sessionId || !csrfToken || !userId || !correlationId) {
-              alert('❌ Missing session data! Please login first to get all required tokens.\\n\\nRequired: session_token, session_id, csrf_token, correlation_id, user_id');
+              alert('[ERROR] Missing session data! Please login first to get all required tokens.\\n\\nRequired: session_token, session_id, csrf_token, correlation_id, user_id');
               return;
           }
 
@@ -2647,14 +2638,14 @@ Congratulations! Your JMeter correlation is working perfectly!`;
                   // Store next step token for future correlation
                   localStorage.setItem('next_step_token', data.next_step_token);
                   
-                  alert(\`✅ Body-Authenticated Success! Added \${data.cart_item.product_name} to cart.\\n\\n🔐 Authentication Method: ALL DATA IN REQUEST BODY\\n📋 Session Token: \${token.substring(0, 20)}...\\n🆔 User ID: \${userId}\\n🔄 Correlation ID: \${correlationId.substring(0, 20)}...\\n\\n📦 Cart Item ID: \${data.cart_item.cart_item_id}\\n👤 User: \${data.cart_item.username}\\n💰 Subtotal: $\${data.cart_item.subtotal}\\n🎯 Next Step Token: \${data.next_step_token}\\n\\n✨ This request used NO Authorization headers - all session/auth data was in the request body for advanced JMeter correlation testing!\`);
+                  alert('[OK] Body-Authenticated Success! Added ' + data.cart_item.product_name + ' to cart.\\n\\n[AUTH] Authentication Method: ALL DATA IN REQUEST BODY\\n[INFO] Session Token: ' + token.substring(0, 20) + '...\\n[ID] User ID: ' + userId + '\\n[SYNC] Correlation ID: ' + correlationId.substring(0, 20) + '...\\n\\n[PACKAGE] Cart Item ID: ' + data.cart_item.cart_item_id + '\\n[USER] User: ' + data.cart_item.username + '\\n[MONEY] Subtotal: $' + data.cart_item.subtotal + '\\n[TARGET] Next Step Token: ' + data.next_step_token + '\\n\\n[SPARKLE] This request used NO Authorization headers - all session/auth data was in the request body for advanced JMeter correlation testing!');
               } else {
-                  alert(\`❌ Error: \${data.error}\\n\\nMessage: \${data.message || 'Unknown error'}\\n\\nMake sure you have all required fields: session_token, user_id, correlation_id\`);
+                  alert('[ERROR] Error: ' + data.error + '\\n\\nMessage: ' + (data.message || 'Unknown error') + '\\n\\nMake sure you have all required fields: session_token, user_id, correlation_id');
               }
           })
           .catch(error => {
               console.error('Cart add error:', error);
-              alert('❌ Network Error: ' + error.message);
+              alert('[ERROR] Network Error: ' + error.message);
           });
       };
       
@@ -2669,21 +2660,19 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           const username = localStorage.getItem('username');
           
           if (token && username) {
-              document.getElementById('user-status').innerHTML = \`
-                  <div class="logged-in">
-                      <h3>✅ Logged in as: \${username}</h3>
-                      <p>Session active - you can add items to cart!</p>
-                      <button onclick="logout()" style="background: #dc3545; color: white; padding: 5px 10px; border: none; border-radius: 3px; cursor: pointer; margin-right: 10px;">Logout</button>
-                      <a href="/dashboard" style="background: #28a745; color: white; padding: 5px 10px; text-decoration: none; border-radius: 3px;">Dashboard</a>
-                  </div>
-              \`;
+              document.getElementById('user-status').innerHTML = 
+                  '<div class="logged-in">' +
+                      '<h3>[OK] Logged in as: ' + username + '</h3>' +
+                      '<p>Session active - you can add items to cart!</p>' +
+                      '<button onclick="logout()" style="background: #dc3545; color: white; padding: 5px 10px; border: none; border-radius: 3px; cursor: pointer; margin-right: 10px;">Logout</button>' +
+                      '<a href="/dashboard" style="background: #28a745; color: white; padding: 5px 10px; text-decoration: none; border-radius: 3px;">Dashboard</a>' +
+                  '</div>';
           } else {
-              document.getElementById('user-status').innerHTML = \`
-                  <div class="not-logged-in">
-                      <h3>👤 Not logged in</h3>
-                      <p><a href="/login">Login</a> to add items to cart (session required for authenticated endpoints).</p>
-                  </div>
-              \`;
+              document.getElementById('user-status').innerHTML = 
+                  '<div class="not-logged-in">' +
+                      '<h3>[USER] Not logged in</h3>' +
+                      '<p><a href="/login">Login</a> to add items to cart (session required for authenticated endpoints).</p>' +
+                  '</div>';
           }
       }
       
@@ -2695,15 +2684,15 @@ Congratulations! Your JMeter correlation is working perfectly!`;
               
               let html = '<h3>Found ' + data.count + ' products:</h3>';
               data.products.forEach(product => {
-                  html += \`<div class="product">
-                      <h4><a href="/product/\${product.id}" style="text-decoration: none; color: #0366d6;">\${product.name}</a></h4>
-                      <p>Category: \${product.category}</p>
-                      <p class="price">$\${product.price}</p>
-                      <p>Stock: \${product.stock} available</p>
-                      <p><small>Product ID: \${product.id}</small></p>
-                      <button onclick="viewProduct(\${product.id})">View Details</button>
-                      <button onclick="window.addToCart(\${product.id})" style="background: #28a745; margin-left: 5px;">Add to Cart</button>
-                  </div>\`;
+                  html += '<div class="product">' +
+                      '<h4><a href="/product/' + product.id + '" style="text-decoration: none; color: #0366d6;">' + product.name + '</a></h4>' +
+                      '<p>Category: ' + product.category + '</p>' +
+                      '<p class="price">$' + product.price + '</p>' +
+                      '<p>Stock: ' + product.stock + ' available</p>' +
+                      '<p><small>Product ID: ' + product.id + '</small></p>' +
+                      '<button onclick="viewProduct(' + product.id + ')">View Details</button>' +
+                      '<button onclick="window.addToCart(' + product.id + ')" style="background: #28a745; margin-left: 5px;">Add to Cart</button>' +
+                  '</div>';
               });
               
               document.getElementById('products').innerHTML = html;
