@@ -1,0 +1,16 @@
+name = "loadmagic-public-demo"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+assets = { directory = "./static", binding = "ASSETS" }
+workers_dev = true
+
+# Bind the D1 database
+[[d1_databases]]
+binding = "DB"
+database_name = "loadmagic-public-demo"
+database_id = "687470b3-ca07-430e-933b-947bee8057e3"
+
+# Custom domain configuration for public.loadmagic.ai
+[[routes]]
+pattern = "public.loadmagic.ai"
+custom_domain = true

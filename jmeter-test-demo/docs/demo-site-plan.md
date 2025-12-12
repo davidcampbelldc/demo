@@ -292,7 +292,83 @@ Legend:
 
 ---
 
-## 12. Success Criteria (Per Case)
+## 12. Implementation Plan (Efficient “Birds With One Stone”)
+
+Goal: implement the backlog with the **fewest endpoints** while maximising coverage.
+
+### 12.1 Design principle
+Build **composable flows** where each flow introduces 2–4 edge characteristics at once:
+- *Where the token lives* (body vs headers vs cookies)
+- *How many candidates exist* (single vs ambiguous vs decoy)
+- *How it evolves* (static vs changes mid-journey)
+- *How hard it is to parse* (encoded/multipart/binary)
+
+Keep endpoints **predictable** so you can auto-generate HARs and regression tests.
+
+---
+
+### 12.2 Public vs Protected classification
+
+**Decision:** The current demo site is now treated as **Protected / Internal IP**.  
+A **separate, simpler Public Demo site** will be created with a reduced, safe subset of cases.
+
+This avoids accidental IP leakage and keeps marketing demos clean and predictable.
+
+Legend:
+- **Protected (Primary)**: Full internal demo, training, regression, agent tuning
+- **Public (Secondary)**: Marketing demos, videos, shareable HARs
+
+| Area | Case | Priority | Deployment | Rationale |
+|---|---|---:|---:|---|
+| Basic | Simple JSON token | P0 | Public + Protected | Table-stakes; expected by all users |
+| Basic | HTTP regex in HTML | P0 | Public + Protected | Common legacy pattern; good demo value |
+| Basic | Short/small dynamic value | P1 | Public (simple) + Protected (subtle) | Public version kept obvious; protected version more ambiguous |
+| Size | Large dynamic value (ViewState ~400KB) | P0 | **Protected only** | Reveals chunking, limits, performance strategies |
+| Size | Large request + response | P1 | **Protected only** | Shows end-to-end payload handling depth |
+| Volume | High token density (50–200) | P1 | **Protected only** | Core AI ranking & confidence IP |
+| Ambiguity | Multiple similar tokens | P0 | **Protected only** | Disambiguation logic is differentiating |
+| Ambiguity | Same token name, different scope | P1 | **Protected only** | Context-aware reasoning |
+| Ambiguity | Decoy tokens / traps | P1 | **Protected only** | Explicit false-positive resistance |
+| Headers | Header-only tokens (cookies/headers) | P0 | **Protected only** | Still breaks many tools; valuable IP |
+| Cookies | Multi cookies + attribute reorder | P1 | **Protected only** | Parser robustness differentiator |
+| Mutation | Token changes mid-journey | P1 | **Protected only** | Stateful correlation logic |
+| Encoding | Line feeds in regex | P0 | Public + Protected | Common regex pitfall; safe to expose |
+| Encoding | HTML-encoded vs raw | P1 | Public + Protected | Common encoding mismatch |
+| Noise | High-entropy but static | P0 | **Protected only** | Preventing over-correlation is key IP |
+| Noise | Uncorrelatable random data | P1 | **Protected only** | Confidence calibration logic |
+| Multipart | multipart/form-data | P2 | **Protected only** | Higher effort + deeper parsing logic |
+| Composite | Split/concatenated token | P2 | **Protected only** | Advanced extraction reasoning |
+| Binary | Base64 tokens / wrapped base64 | P2 | **Protected only** | Binary-safe extraction IP |
+| Transport | gzip/brotli, chunked | P2 | **Protected only** | Internal hardening |
+| Future | WebSocket/SSE token handover | P3 | **Protected only** | Long-term strategic differentiator |
+
+**Rule of thumb:**
+- Public = *"works on what users expect"*
+- Protected = *"reveals how we win"*
+
+---
+
+### 12.3 Minimal endpoint set (recommended)
+
+#### Flow A — “Headers + Cookies + Scope” (covers multiple P0/P1)
+**Purpose:** nail modern web realities (headers/cookies) plus ambiguity.
+
+Endpoints:
+1. `GET /flowA/start`
+   - Returns **Set-Cookie**: `session=<id>`
+   - Returns header **X-CSRF-TOKEN: <tokenA>`
+   - Response body contains a **decoy** `csrf` value as well
+2. `POST /flowA/submit`
+   - Requires **cookie session** + **header csrf tokenA**
+   - Returns JSON:
+     - multiple similar tokens: `csrf`, `previous_csrf`, `meta.csrf`
+     - plus `admin.sessionId` vs `sessionId` (scope)
+3. `POST /flowA/confirm`
+   - Must use the **correct** token from step 2
+
+---
+
+## 13. Success Criteria (Per Case) (Per Case)
 
 Each case should validate:
 - Correct value identified
@@ -303,7 +379,7 @@ Each case should validate:
 
 ---
 
-**Document Version:** 1.0  
+**Document Version:** 1.1  
 **Owner:** LoadMagic.ai  
 **Intended Audience:** Dev, QA, AI Agent Authors
 
