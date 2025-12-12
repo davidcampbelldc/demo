@@ -93,6 +93,39 @@ export default {
           case path === '/api/dashboard1/step2' && method === 'POST':
             return await handleDashboard1Step2(request, env, corsHeaders);
 
+          case path === '/api/dashboard1/step3' && method === 'POST':
+            return await handleDashboard1Step3(request, env, corsHeaders);
+
+          case path === '/api/dashboard1/step4' && method === 'POST':
+            return await handleDashboard1Step4(request, env, corsHeaders);
+
+          case path === '/api/dashboard1/step5' && method === 'POST':
+            return await handleDashboard1Step5(request, env, corsHeaders);
+
+          case path === '/api/dashboard1/step6' && method === 'POST':
+            return await handleDashboard1Step6(request, env, corsHeaders);
+
+          case path === '/favicon.ico' && method === 'GET':
+            if (!env.ASSETS) {
+              return new Response('Static assets not configured', { status: 500, headers: corsHeaders });
+            }
+            return await env.ASSETS.fetch(new Request(new URL('/images/favicon.png', request.url), request));
+
+          case path.startsWith('/images/') && method === 'GET':
+            if (!env.ASSETS) {
+              return new Response('Static assets not configured', { status: 500, headers: corsHeaders });
+            }
+            return await env.ASSETS.fetch(new Request(new URL(path, request.url), request));
+
+          case path.startsWith('/static/') && method === 'GET':
+            if (!env.ASSETS) {
+              return new Response('Static assets not configured', { status: 500, headers: corsHeaders });
+            }
+            // Strip the /static prefix to match asset root
+            const assetUrl = new URL(request.url);
+            assetUrl.pathname = path.replace(/^\/static/, '');
+            return await env.ASSETS.fetch(new Request(assetUrl, request));
+
           default:
             return new Response('Not Found', { 
               status: 404, 
@@ -172,7 +205,7 @@ export default {
           ...corsHeaders,
           'Content-Type': 'application/json',
           'Set-Cookie': `session_id=${sessionId}; Path=/; HttpOnly; SameSite=Lax`,
-          // Add tokens to headers for JMeter correlation (in case body isn't captured)
+          // Add tokens to headers for correlation (in case body isn't captured)
           'X-Session-Token': sessionToken,
           'X-Session-Id': sessionId,
           'X-CSRF-Token': csrfToken,
@@ -398,12 +431,12 @@ export default {
       const body = await request.json();
       const { product_id, quantity = 1, session_token, user_id, correlation_id, session_id, csrf_token, client_session_id } = body;
 
-      // Require ALL session data in request body for JMeter correlation testing
+      // Require ALL session data in request body for correlation testing
       if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token) {
         return new Response(JSON.stringify({
           error: 'Missing required session fields in request body',
           required: ['session_token', 'user_id', 'correlation_id', 'session_id', 'csrf_token'],
-          message: 'All session data must be provided in request body for JMeter correlation testing',
+          message: 'All session data must be provided in request body for correlation testing',
           example: {
             "product_id": 1,
             "quantity": 1,
@@ -828,9 +861,9 @@ export default {
       const body = await request.json();
       const { session_token, user_id, correlation_id, session_id, csrf_token, test_message } = body;
 
-      // Require ALL session data in request body for JMeter correlation testing
+      // Require ALL session data in request body for correlation testing
       if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token) {
-        return new Response('HTTP 400 - Missing required session fields in request body\n\nRequired: session_token, user_id, correlation_id, session_id, csrf_token\n\nExample:\n{\n  "session_token": "tok_...",\n  "user_id": 1,\n  "correlation_id": "tok_...",\n  "session_id": "sess_...",\n  "csrf_token": "tok_...",\n  "test_message": "Hello from JMeter!"\n}', {
+        return new Response('HTTP 400 - Missing required session fields in request body\n\nRequired: session_token, user_id, correlation_id, session_id, csrf_token\n\nExample:\n{\n  "session_token": "tok_...",\n  "user_id": 1,\n  "correlation_id": "tok_...",\n  "session_id": "sess_...",\n  "csrf_token": "tok_...",\n  "test_message": "Hello from LoadMagic!"\n}', {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
         });
@@ -867,8 +900,8 @@ export default {
         'UPDATE users SET http_test_step2_token = ?, http_test_step2_token_timestamp = ? WHERE id = ?'
       ).bind(step2Token, timestamp, user.id).run();
 
-      // Return simple HTTP response (not JSON) - perfect for JMeter testing
-      const responseText = `HTTP 200 - JMeter HTTP Test Step 1 Successful!
+      // Return simple HTTP response (not JSON) - perfect for testing
+      const responseText = `HTTP 200 - HTTP Test Step 1 Successful!
 
 [AUTH] Authentication Method: Request Body Session Data
 [INFO] Session Token: ${session_token.substring(0, 20)}...
@@ -890,9 +923,9 @@ export default {
 🔑 STEP 2 TOKEN: ${step2Token}
 
 📝 Response Format: Plain HTTP (not JSON)
-🔗 Perfect for testing HTTP response parsing in JMeter
+🔗 Perfect for testing HTTP response parsing
 
-⚠️  IMPORTANT FOR JMETER CORRELATION:
+⚠️  IMPORTANT FOR CORRELATION:
 • Extract the "STEP 2 TOKEN" from this response
 • Use it in the next request to /api/http-test-step2
 • Step 2 will FAIL without this token!
@@ -900,7 +933,7 @@ export default {
 Next Steps:
 • Extract STEP 2 TOKEN: ${step2Token}
 • Send it to /api/http-test-step2 endpoint
-• Test multi-step correlation in JMeter`;
+• Test multi-step correlation`;
 
       return new Response(responseText, {
         status: 200,
@@ -918,7 +951,7 @@ Next Steps:
       });
     } catch (error) {
       console.error('Error in handleHttpTest:', error);
-      return new Response(`HTTP 500 - Internal Server Error\n\nError: ${error.message}\n\nThis endpoint requires session data in request body for JMeter correlation testing.`, {
+      return new Response(`HTTP 500 - Internal Server Error\n\nError: ${error.message}\n\nThis endpoint requires session data in request body for correlation testing.`, {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
       });
@@ -932,7 +965,7 @@ Next Steps:
 
       // Require ALL session data AND step2_token from step 1
       if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token || !step2_token) {
-        return new Response('HTTP 400 - Missing required fields for Step 2\n\nRequired: session_token, user_id, correlation_id, session_id, csrf_token, step2_token\n\n⚠️  step2_token MUST be extracted from Step 1 response!\n\nExample:\n{\n  "session_token": "tok_...",\n  "user_id": 1,\n  "correlation_id": "tok_...",\n  "session_id": "sess_...",\n  "csrf_token": "tok_...",\n  "step2_token": "tok_...",\n  "test_message": "Step 2 from JMeter!"\n}', {
+        return new Response('HTTP 400 - Missing required fields for Step 2\n\nRequired: session_token, user_id, correlation_id, session_id, csrf_token, step2_token\n\n⚠️  step2_token MUST be extracted from Step 1 response!\n\nExample:\n{\n  "session_token": "tok_...",\n  "user_id": 1,\n  "correlation_id": "tok_...",\n  "session_id": "sess_...",\n  "csrf_token": "tok_...",\n  "step2_token": "tok_...",\n  "test_message": "Step 2 from LoadMagic!"\n}', {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
         });
@@ -967,7 +1000,7 @@ Next Steps:
       }
 
       if (user.http_test_step2_token !== step2_token) {
-        return new Response(`HTTP 400 - Correlation FAILED: step2_token mismatch\n\n⚠️  The step2_token you provided does not match the one generated in Step 1!\n\n[ERROR] Correlation Test: FAILED\n[ERROR] Expected: ${user.http_test_step2_token.substring(0, 20)}...\n[ERROR] Received: ${step2_token.substring(0, 20)}...\n\nThis means your JMeter correlation extractor is not working correctly.\n\nPlease check:\n1. Did you extract the step2_token from Step 1 response?\n2. Is your Regular Expression Extractor configured correctly?\n3. Are you using the correct variable name in Step 2 request?`, {
+        return new Response(`HTTP 400 - Correlation FAILED: step2_token mismatch\n\n⚠️  The step2_token you provided does not match the one generated in Step 1!\n\n[ERROR] Correlation Test: FAILED\n[ERROR] Expected: ${user.http_test_step2_token.substring(0, 20)}...\n[ERROR] Received: ${step2_token.substring(0, 20)}...\n\nThis means your correlation extractor is not working correctly.\n\nPlease check:\n1. Did you extract the step2_token from Step 1 response?\n2. Is your Regular Expression Extractor configured correctly?\n3. Are you using the correct variable name in Step 2 request?`, {
           status: 400,
           headers: {
             ...corsHeaders,
@@ -991,7 +1024,7 @@ Next Steps:
       const serverId = "srv-" + Math.random().toString(36).substr(2, 6);
 
       // Return step 2 HTTP response
-      const responseText = `HTTP 200 - JMeter HTTP Test Step 2 Successful!
+      const responseText = `HTTP 200 - HTTP Test Step 2 Successful!
 
 [AUTH] Authentication Method: Request Body Session Data + Step 2 Token
 [INFO] Session Token: ${session_token.substring(0, 20)}...
@@ -1016,9 +1049,9 @@ Next Steps:
 🏆 FINAL SUCCESS TOKEN: ${finalToken}
 
 📝 Response Format: Plain HTTP (not JSON)
-🔗 Perfect for testing multi-step correlation in JMeter
+🔗 Perfect for testing multi-step correlation
 
-[OK] JMeter Correlation Test Results:
+[OK] Correlation Test Results:
 • Step 1: Session authentication ✓
 • Step 2: Token extraction ✓
 • Step 2: Token validation ✓
@@ -1028,7 +1061,7 @@ Next Steps:
 📊 Both steps required session data in request body
 🔗 Step 2 required token extracted from Step 1 response
 
-Congratulations! Your JMeter correlation is working perfectly!`;
+Congratulations! Your correlation is working perfectly!`;
 
       return new Response(responseText, {
         status: 200,
@@ -1047,7 +1080,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       });
     } catch (error) {
       console.error('Error in handleHttpTestStep2:', error);
-      return new Response(`HTTP 500 - Internal Server Error\n\nError: ${error.message}\n\nThis endpoint requires session data AND step2_token in request body for JMeter multi-step correlation testing.`, {
+      return new Response(`HTTP 500 - Internal Server Error\n\nError: ${error.message}\n\nThis endpoint requires session data AND step2_token in request body for multi-step correlation testing.`, {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
       });
@@ -1218,7 +1251,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           received: shortID,
           hint: 'The shortID you provided does not match the one generated in Step 1',
           correlation_test: 'FAILED',
-          reason: 'Incorrect correlation value - JMeter extraction failed or wrong value used'
+          reason: 'Incorrect correlation value - correlation extraction failed or wrong value used'
         }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -1268,117 +1301,894 @@ Congratulations! Your JMeter correlation is working perfectly!`;
     }
   }
 
-  // Utility Functions
-  function generateToken() {
-    return 'tok_' + Math.random().toString(36).substr(2, 16) + Date.now().toString(36);
+  async function handleDashboard1Step3(request, env, corsHeaders) {
+    try {
+      const body = await request.json();
+      const { session_token, user_id, session_id } = body || {};
+
+      if (!session_token || !user_id || !session_id) {
+        return new Response(JSON.stringify({
+          error: 'Missing required fields',
+          required: ['session_token', 'session_id', 'user_id'],
+          hint: 'Send the full session body to generate the large viewstate'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (!env.DB) {
+        return new Response(JSON.stringify({
+          error: 'Database not available'
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const user = await env.DB.prepare(
+        'SELECT id, username, session_token, session_id, csrf_token, correlation_id FROM users WHERE session_token = ? AND id = ? AND session_id = ?'
+      ).bind(session_token, user_id, session_id).first();
+
+      if (!user) {
+        return new Response(JSON.stringify({
+          error: 'Invalid session',
+          hint: 'Session token, session_id, or user_id is invalid'
+        }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const state = await buildLargeViewState(user.session_id, user.session_token, user.id);
+
+      const responsePayload = {
+        success: true,
+        message: 'Step 3 completed - large viewstate generated',
+        viewstate: state.viewstate,
+        viewstate_base64_length: state.viewstate.length,
+        viewstate_raw_length: state.rawLength,
+        signature: state.signature,
+        signature_hint: state.signature.substring(0, 12) + '...',
+        timestamp: state.timestamp,
+        constraints: {
+          minimum_view_length: 350000,
+          includes_nonce_and_signature: true,
+          structure: ['v', 'sid', 'uid', 'ts', 'nonce', 'sig', 'view']
+        }
+      };
+
+      return new Response(JSON.stringify(responsePayload), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+          'X-Viewstate-Signature': state.signature,
+          'X-Viewstate-Size': state.rawLength.toString(),
+          'X-Viewstate-Base64-Size': state.viewstate.length.toString()
+        }
+      });
+    } catch (error) {
+      console.error('Error in handleDashboard1Step3:', error);
+      return new Response(JSON.stringify({
+        error: 'Internal server error',
+        message: error.message
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
   }
-  
-  // HTML Pages
-  function getHomePage() {
-    return `<!DOCTYPE html>
-  <html>
-  <head>
-      <title>JMeter Test Demo</title>
-      <style>
-          body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
-          .endpoint { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
-          .method { display: inline-block; padding: 3px 8px; border-radius: 3px; color: white; font-weight: bold; }
-          .get { background: #61affe; }
-          .post { background: #49cc90; }
-          a { color: #0366d6; text-decoration: none; }
-          a:hover { text-decoration: underline; }
-          .user-status { background: #e8f5e8; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-          .not-logged-in { background: #fff3cd; color: #856404; }
-          .logged-in { background: #d4edda; color: #155724; }
-      </style>
-  </head>
-  <body>
-      <h1>JMeter Test Demo API</h1>
-      
-      <div id="user-status" class="user-status">
-          <p>Loading user status...</p>
+
+  async function handleDashboard1Step4(request, env, corsHeaders) {
+    try {
+      const body = await request.json();
+      const { session_token, user_id, session_id, viewstate } = body || {};
+
+      if (!session_token || !user_id || !session_id || !viewstate) {
+        return new Response(JSON.stringify({
+          error: 'Missing required fields',
+          required: ['session_token', 'session_id', 'user_id', 'viewstate'],
+          hint: 'Send the exact viewstate from Step 3 without trimming it'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (!env.DB) {
+        return new Response(JSON.stringify({
+          error: 'Database not available'
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const user = await env.DB.prepare(
+        'SELECT id, username, session_token, session_id FROM users WHERE session_token = ? AND id = ? AND session_id = ?'
+      ).bind(session_token, user_id, session_id).first();
+
+      if (!user) {
+        return new Response(JSON.stringify({
+          error: 'Invalid session',
+          hint: 'Session token, session_id, or user_id is invalid'
+        }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      let decoded;
+      let parsed;
+
+      try {
+        decoded = atob(viewstate);
+        parsed = JSON.parse(decoded);
+      } catch (err) {
+        return new Response(JSON.stringify({
+          error: 'Invalid viewstate encoding',
+          details: err.message,
+          hint: 'Viewstate must be the base64 string returned in Step 3'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const issues = [];
+      const requiredKeys = ['v', 'sid', 'uid', 'ts', 'nonce', 'sig', 'view'];
+      const missingKeys = requiredKeys.filter(key => !(key in parsed));
+
+      if (missingKeys.length > 0) {
+        issues.push(`Missing fields: ${missingKeys.join(', ')}`);
+      }
+
+      if (parsed.sid !== session_id) {
+        issues.push('Session ID inside viewstate does not match request session_id');
+      }
+
+      if (String(parsed.uid) !== String(user.id)) {
+        issues.push('User ID inside viewstate does not match request user_id');
+      }
+
+      if (!parsed.view || parsed.view.length < 350000) {
+        issues.push('Viewstate payload is too small - expected a large ASP.NET style payload (>350KB raw)');
+      }
+
+      const recomputedSignature = await sha256Base64(`${session_token}|${session_id}|${user_id}|${parsed.nonce}|${parsed.ts}`);
+
+      if (parsed.sig !== recomputedSignature) {
+        issues.push('Signature mismatch - correlation failed');
+      }
+
+      if (issues.length > 0) {
+        return new Response(JSON.stringify({
+          error: 'Viewstate validation failed',
+          issues,
+          received_structure: Object.keys(parsed),
+          received_lengths: {
+            raw_view_length: parsed.view ? parsed.view.length : 0,
+            base64_length: viewstate.length
+          }
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const responsePayload = {
+        success: true,
+        message: 'Step 4 completed - large viewstate validated',
+        validated: true,
+        username: user.username,
+        user_id: user.id,
+        session_id: user.session_id,
+        signature_valid: true,
+        signature: parsed.sig,
+        view_lengths: {
+          raw_view_length: parsed.view.length,
+          base64_length: viewstate.length
+        },
+        timestamp: parsed.ts,
+        nonce: parsed.nonce
+      };
+
+      return new Response(JSON.stringify(responsePayload), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+          'X-Viewstate-Validated': 'true',
+          'X-Viewstate-Signature': parsed.sig,
+          'X-Viewstate-Size': parsed.view.length.toString(),
+          'X-Viewstate-Nonce': parsed.nonce
+        }
+      });
+    } catch (error) {
+      console.error('Error in handleDashboard1Step4:', error);
+      return new Response(JSON.stringify({
+        error: 'Internal server error',
+        message: error.message
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
+  async function handleDashboard1Step5(request, env, corsHeaders) {
+    try {
+      const body = await request.json();
+      const { session_token, user_id, session_id, transactions, meta } = body || {};
+
+      if (!session_token || !user_id || !session_id || !transactions || !Array.isArray(transactions)) {
+        return new Response(JSON.stringify({
+          error: 'Missing required fields',
+          required: ['session_token', 'session_id', 'user_id', 'transactions'],
+          hint: 'transactions must be an array and should be large (200KB+)'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (!env.DB) {
+        return new Response(JSON.stringify({
+          error: 'Database not available'
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const user = await env.DB.prepare(
+        'SELECT id, username, session_token, session_id FROM users WHERE session_token = ? AND id = ? AND session_id = ?'
+      ).bind(session_token, user_id, session_id).first();
+
+      if (!user) {
+        return new Response(JSON.stringify({
+          error: 'Invalid session',
+          hint: 'Session token, session_id, or user_id is invalid'
+        }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Basic structure validation for transactions array
+      const minCount = 600;
+      if (transactions.length < minCount) {
+        return new Response(JSON.stringify({
+          error: 'Payload too small',
+          hint: `Provide at least ${minCount} transaction objects to simulate bulk payloads`
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const transactionsString = JSON.stringify(transactions);
+      if (transactionsString.length < 500000) {
+        return new Response(JSON.stringify({
+          error: 'Payload size too small',
+          received_bytes: transactionsString.length,
+          hint: 'Aim for >500KB to exercise large-body handling'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const batchId = generateToken();
+      const pivotIndex = Math.min(Math.floor(transactions.length / 2), transactions.length - 1);
+      const pivotItem = transactions[pivotIndex] || {};
+      const pivotItemId = pivotItem.id ? String(pivotItem.id) : `pivot_${pivotIndex}`;
+      const validationCode = await sha256Base64(`${batchId}|${pivotItemId}|${session_token}|${session_id}|${user_id}|${transactions.length}`);
+
+      // Generate large response payload (~400KB) to test response correlation edge cases
+      const responseFiller = generateFillerString(400000);
+      const responseSignature = await sha256Base64(`${batchId}|${validationCode}|${responseFiller.substring(0, 100)}`);
+
+      const responsePayload = {
+        success: true,
+        message: 'Step 5 completed - bulk payload accepted',
+        batch_id: batchId,
+        pivot_item_id: pivotItemId,
+        validation_code: validationCode,
+        transactions_count: transactions.length,
+        payload_bytes: transactionsString.length,
+        constraints: {
+          minimum_count: minCount,
+          minimum_bytes: 500000
+        },
+        meta_echo: meta || null,
+        hint: 'Send batch_id, pivot_item_id, validation_code, and transactions_count to Step 6',
+        // Large response data for edge case testing (correlation tools must handle large responses)
+        response_data: {
+          filler: responseFiller,
+          filler_length: responseFiller.length,
+          response_signature: responseSignature,
+          response_signature_hint: responseSignature.substring(0, 12) + '...',
+          purpose: 'Large response payload to test LLM token limit edge cases in correlation tools'
+        }
+      };
+
+      return new Response(JSON.stringify(responsePayload), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+          'X-Batch-Id': batchId,
+          'X-Large-Payload-Size': transactionsString.length.toString(),
+          'X-Pivot-Item-Id': pivotItemId,
+          'X-Validation-Code': validationCode.substring(0, 24) + '...'
+        }
+      });
+    } catch (error) {
+      console.error('Error in handleDashboard1Step5:', error);
+      return new Response(JSON.stringify({
+        error: 'Internal server error',
+        message: error.message
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
+  async function handleDashboard1Step6(request, env, corsHeaders) {
+    try {
+      const body = await request.json();
+      const { session_token, user_id, session_id, batch_id, validation_code, pivot_item_id, transactions_count } = body || {};
+
+      if (!session_token || !user_id || !session_id || !batch_id || !validation_code || !pivot_item_id || !transactions_count) {
+        return new Response(JSON.stringify({
+          error: 'Missing required fields',
+          required: ['session_token', 'session_id', 'user_id', 'batch_id', 'validation_code', 'pivot_item_id', 'transactions_count'],
+          hint: 'Use the values returned from Step 5'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (!env.DB) {
+        return new Response(JSON.stringify({
+          error: 'Database not available'
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const user = await env.DB.prepare(
+        'SELECT id, username, session_token, session_id FROM users WHERE session_token = ? AND id = ? AND session_id = ?'
+      ).bind(session_token, user_id, session_id).first();
+
+      if (!user) {
+        return new Response(JSON.stringify({
+          error: 'Invalid session',
+          hint: 'Session token, session_id, or user_id is invalid'
+        }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const expectedCode = await sha256Base64(`${batch_id}|${pivot_item_id}|${session_token}|${session_id}|${user_id}|${transactions_count}`);
+
+      if (validation_code !== expectedCode) {
+        return new Response(JSON.stringify({
+          error: 'Validation code mismatch - correlation failed',
+          expected_hint: expectedCode.substring(0, 20) + '...',
+          received_hint: validation_code.substring(0, 20) + '...',
+          hint: 'Ensure you replayed the exact code from Step 5'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const responsePayload = {
+        success: true,
+        message: 'Step 6 completed - large payload correlation validated',
+        batch_id,
+        pivot_item_id,
+        transactions_count,
+        username: user.username,
+        validation_confirmed: true,
+        timestamp: new Date().toISOString()
+      };
+
+      return new Response(JSON.stringify(responsePayload), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+          'X-Batch-Validated': batch_id,
+          'X-Pivot-Item-Id': pivot_item_id,
+          'X-Transactions-Count': transactions_count.toString()
+        }
+      });
+    } catch (error) {
+      console.error('Error in handleDashboard1Step6:', error);
+      return new Response(JSON.stringify({
+        error: 'Internal server error',
+        message: error.message
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
+// Utility Functions
+function generateToken() {
+  return 'tok_' + Math.random().toString(36).substr(2, 16) + Date.now().toString(36);
+}
+
+function generateFillerString(targetLength = 400000) {
+  // Generate highly random content that doesn't compress well
+  // Using crypto.getRandomValues for true randomness that defeats gzip
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const charsLen = chars.length;
+  const result = new Array(targetLength);
+
+  // Generate in chunks of 65536 (max for getRandomValues)
+  const chunkSize = 65536;
+  let offset = 0;
+
+  while (offset < targetLength) {
+    const remaining = targetLength - offset;
+    const currentChunkSize = Math.min(chunkSize, remaining);
+    const randomBytes = new Uint8Array(currentChunkSize);
+    crypto.getRandomValues(randomBytes);
+
+    for (let i = 0; i < currentChunkSize; i++) {
+      result[offset + i] = chars[randomBytes[i] % charsLen];
+    }
+    offset += currentChunkSize;
+  }
+
+  return result.join('');
+}
+
+async function sha256Base64(input) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(input);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashString = String.fromCharCode.apply(null, hashArray);
+  return btoa(hashString);
+}
+
+async function buildLargeViewState(sessionId, sessionToken, userId) {
+  const timestamp = new Date().toISOString();
+  const nonce = generateToken();
+  const payloadBase = `${sessionToken}|${sessionId}|${userId}|${nonce}|${timestamp}`;
+  const signature = await sha256Base64(payloadBase);
+  const filler = generateFillerString(); // ~400KB raw to exceed 128k-token contexts
+
+  const stateObject = {
+    v: '1.0',
+    sid: sessionId,
+    uid: userId,
+    ts: timestamp,
+    nonce,
+    sig: signature,
+    view: filler
+  };
+
+  const raw = JSON.stringify(stateObject);
+  const viewstate = btoa(raw);
+
+  return {
+    viewstate,
+    rawLength: raw.length,
+    signature,
+    timestamp
+  };
+}
+
+// Shared styling and branding
+const LOGO_IMAGE_PATH = '/images/loadmagic-shadow.png';
+
+const BASE_STYLES = `
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+  :root {
+    --bg: #070b14;
+    --panel: #0f1727;
+    --panel-alt: #111b2e;
+    --border: rgba(255, 255, 255, 0.08);
+    --text: #e6e8ec;
+    --muted: #9aa5be;
+    --accent: #2fb1ff;
+    --accent-2: #6fd6ff;
+    --success: #34d399;
+    --danger: #ef4444;
+    --warn: #fbbf24;
+    --shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body.page {
+    margin: 0;
+    padding: 0 0 40px 0;
+    background: radial-gradient(circle at 15% 20%, rgba(47, 177, 255, 0.08), transparent 35%), radial-gradient(circle at 80% 10%, rgba(111, 214, 255, 0.08), transparent 30%), var(--bg);
+    color: var(--text);
+    font-family: 'Space Grotesk', 'Segoe UI', sans-serif;
+    line-height: 1.6;
+  }
+
+  a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 500;
+  }
+
+  a:hover {
+    color: var(--accent-2);
+    text-decoration: underline;
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 18px 24px;
+    background: linear-gradient(120deg, rgba(15, 22, 39, 0.95), rgba(12, 20, 34, 0.92));
+    border-bottom: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(8px);
+  }
+
+  .logo {
+    height: 52px;
+    width: auto;
+    display: block;
+    filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.4));
+  }
+
+  .titles {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .titles .eyebrow {
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    font-size: 11px;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  .titles h1 {
+    margin: 0;
+    font-size: 22px;
+  }
+
+  .titles .subtitle {
+    margin: 2px 0 0 0;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .nav {
+    margin-left: auto;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .nav a {
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .content {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 26px 22px 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .card,
+  .endpoint,
+  .user-status,
+  .session-info,
+  .auth-test,
+  .filters,
+  .product,
+  .product-detail,
+  .checkout-section,
+  .correlation-info,
+  .test-section,
+  .step-box {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px 18px;
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.28);
+  }
+
+  .section-title {
+    margin: 0 0 10px 0;
+    font-size: 18px;
+  }
+
+  button {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #08101f;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
+  }
+
+  button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 26px rgba(47, 177, 255, 0.35);
+    opacity: 0.95;
+  }
+
+  input,
+  select,
+  textarea {
+    background: #0f1626;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    width: 100%;
+    font-size: 15px;
+  }
+
+  label {
+    color: var(--muted);
+  }
+
+  code {
+    background: #0f1626;
+    padding: 2px 6px;
+    border-radius: 6px;
+    color: #9cdcfe;
+  }
+
+  pre {
+    background: #0f1626;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    overflow-x: auto;
+    color: var(--text);
+  }
+
+  .endpoint {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .method {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 8px;
+    color: #0b1220;
+    font-weight: 800;
+  }
+
+  .get {
+    background: linear-gradient(135deg, #60a5fa, #38bdf8);
+  }
+
+  .post {
+    background: linear-gradient(135deg, #34d399, #22c55e);
+  }
+
+  .success {
+    background: rgba(52, 211, 153, 0.08);
+    color: #34d399;
+    border: 1px solid rgba(52, 211, 153, 0.35);
+    border-radius: 10px;
+    padding: 12px;
+  }
+
+  .error {
+    background: rgba(239, 68, 68, 0.08);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    border-radius: 10px;
+    padding: 12px;
+  }
+
+  .info {
+    background: rgba(59, 130, 246, 0.08);
+    color: #93c5fd;
+    border: 1px solid rgba(59, 130, 246, 0.28);
+    border-radius: 10px;
+    padding: 12px;
+  }
+
+  .user-status,
+  .not-logged-in,
+  .logged-in {
+    border-radius: 12px;
+  }
+
+  .logged-in {
+    background: rgba(52, 211, 153, 0.1);
+    border: 1px solid rgba(52, 211, 153, 0.35);
+  }
+
+  .not-logged-in {
+    background: rgba(251, 191, 36, 0.08);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+  }
+
+  .pill {
+    display: inline-block;
+    padding: 4px 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  ul {
+    padding-left: 18px;
+  }
+`;
+
+function renderHeader(title, subtitle = '') {
+  return `
+    <header class="topbar">
+      <img src="${LOGO_IMAGE_PATH}" alt="LoadMagic.AI logo" class="logo">
+      <div class="titles">
+        <p class="eyebrow">LoadMagic.AI</p>
+        <h1>${title}</h1>
+        ${subtitle ? `<p class="subtitle">${subtitle}</p>` : ''}
+      </div>
+      <nav class="nav">
+        <a href="/">Home</a>
+        <a href="/products">Products</a>
+        <a href="/login">Login</a>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/dashboard1">Dashboard1</a>
+      </nav>
+    </header>
+  `;
+}
+
+// HTML Pages
+function getHomePage() {
+  return `<!DOCTYPE html>
+<html>
+<head>
+    <title>LoadMagic Test Demo</title>
+    <style>
+      ${BASE_STYLES}
+      .endpoint-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 12px;
+      }
+      .endpoint strong {
+        color: var(--text);
+      }
+    </style>
+</head>
+<body class="page">
+    ${renderHeader('LoadMagic Test Demo', 'Dark mode experience for LoadMagic.AI correlation flows')}
+    <div class="content">
+      <div class="card">
+          <p>This demo app provides both HTML forms and JSON API endpoints for testing your dynamic correlation plugin.</p>
       </div>
       
-      <p>This demo app provides both HTML forms and JSON API endpoints for testing your JMeter dynamic correlation plugin.</p>
-      
-      <h2>HTML Pages (for manual testing)</h2>
-      <ul>
-          <li><a href="/login">Login Form</a></li>
-          <li><a href="/products">Products Catalog</a></li>
-          <li><a href="/checkout">Checkout Process</a> (session required)</li>
-          <li><a href="/dashboard">Authenticated Dashboard</a> (session required)</li>
-      </ul>
-      
-      <h2>API Endpoints (for JMeter testing)</h2>
-      
-      <div class="endpoint">
-          <span class="method post">POST</span> <strong>/api/login</strong><br>
-          Body: <code>{"username": "testuser1", "password": "123"}</code><br>
-          Returns: <code>session_token</code> for correlation
+      <div class="card">
+          <h2 class="section-title">HTML Pages (for manual testing)</h2>
+          <ul>
+              <li><a href="/login">Login Form</a></li>
+              <li><a href="/products">Products Catalog</a></li>
+              <li><a href="/checkout">Checkout Process</a> (session required)</li>
+              <li><a href="/dashboard">Authenticated Dashboard</a> (session required)</li>
+              <li><a href="/dashboard1">Dashboard1</a>  (short data edge case test)</li>
+          </ul>
       </div>
       
-      <div class="endpoint">
-          <span class="method get">GET</span> <strong>/api/products</strong><br>
-          Optional: <code>?category=Electronics</code><br>
-          Returns: List of products with IDs for correlation
+      <div class="card">
+          <h2 class="section-title">API Endpoints (for testing)</h2>
+          <div class="endpoint-grid">
+              <div class="endpoint">
+                  <span class="method post">POST</span> <strong>/api/login</strong><br>
+                  Body: <code>{"username": "testuser1", "password": "123"}</code><br>
+                  Returns: <code>session_token</code> for correlation
+              </div>
+              
+              <div class="endpoint">
+                  <span class="method get">GET</span> <strong>/api/products</strong><br>
+                  Optional: <code>?category=Electronics</code><br>
+                  Returns: List of products with IDs for correlation
+              </div>
+              
+              <div class="endpoint">
+                  <span class="method get">GET</span> <strong>/api/products/{product_id}</strong><br>
+                  Example: <code>/api/products/1</code><br>
+                  Returns: Individual product details with enhanced data
+              </div>
+              
+              <div class="endpoint">
+                  <span class="method post">POST</span> <strong>/api/user/profile</strong><br>
+                  Body: <code>{"session_token": "...", "user_id": 1, "correlation_id": "..."}</code><br>
+                  Returns: User profile data (auth via request body, not headers)
+              </div>
+              
+              <div class="endpoint">
+                  <span class="method post">POST</span> <strong>/api/cart/add</strong><br>
+                  Body: <code>{"product_id": 1, "session_token": "...", "user_id": 1, "correlation_id": "..."}</code><br>
+                  Returns: Cart item details (auth via request body, not headers)
+              </div>
+              
+              <div class="endpoint">
+                  <span class="method post">POST</span> <strong>/api/checkout/process</strong><br>
+                  Body: <code>{"session_token": "...", "user_id": 1, "correlation_id": "...", "checkout_token": "..."}</code><br>
+                  Returns: Order confirmation (all correlation data required in body)
+              </div>
+              
+              <div class="endpoint">
+                  <span class="method post">POST</span> <strong>/api/orders</strong><br>
+                  Headers: <code>Authorization: Bearer {session_token}</code><br>
+                  Body: <code>{"product_ids": [1,2], "quantities": [1,2]}</code><br>
+                  Returns: <code>order_token</code> for correlation
+              </div>
+              
+              <div class="endpoint">
+                  <span class="method get">GET</span> <strong>/api/orders/{order_token}</strong><br>
+                  Returns: Order details and tracking info
+              </div>
+              
+              <div class="endpoint">
+                  <span class="method post">POST</span> <strong>/api/http-test</strong><br>
+                  Body: <code>{"session_token": "...", "user_id": 1, "correlation_id": "...", "test_message": "Hello!"}</code><br>
+                  Returns: <strong>Plain HTTP text response (not JSON)</strong> with Step 2 token for next step
+              </div>
+              
+              <div class="endpoint">
+                  <span class="method post">POST</span> <strong>/api/http-test-step2</strong><br>
+                  Body: <code>{"session_token": "...", "user_id": 1, "correlation_id": "...", "step2_token": "..."}</code><br>
+                  Returns: <strong>Plain HTTP text response (not JSON)</strong> - Requires Step 2 token from Step 1!
+              </div>
+          </div>
       </div>
       
-      <div class="endpoint">
-          <span class="method get">GET</span> <strong>/api/products/{product_id}</strong><br>
-          Example: <code>/api/products/1</code><br>
-          Returns: Individual product details with enhanced data
+      <div class="card">
+          <h2 class="section-title">Test Users</h2>
+          <ul>
+              <li><strong>testuser1</strong> / password: <strong>123</strong></li>
+              <li><strong>testuser2</strong> / password: <strong>456</strong></li>
+              <li><strong>adminuser</strong> / password: <strong>789</strong></li>
+          </ul>
       </div>
-      
-      <div class="endpoint">
-          <span class="method post">POST</span> <strong>/api/user/profile</strong><br>
-          Body: <code>{"session_token": "...", "user_id": 1, "correlation_id": "..."}</code><br>
-          Returns: User profile data (auth via request body, not headers)
-      </div>
-      
-      <div class="endpoint">
-          <span class="method post">POST</span> <strong>/api/cart/add</strong><br>
-          Body: <code>{"product_id": 1, "session_token": "...", "user_id": 1, "correlation_id": "..."}</code><br>
-          Returns: Cart item details (auth via request body, not headers)
-      </div>
-      
-      <div class="endpoint">
-          <span class="method post">POST</span> <strong>/api/checkout/process</strong><br>
-          Body: <code>{"session_token": "...", "user_id": 1, "correlation_id": "...", "checkout_token": "..."}</code><br>
-          Returns: Order confirmation (all correlation data required in body)
-      </div>
-      
-      <div class="endpoint">
-          <span class="method post">POST</span> <strong>/api/orders</strong><br>
-          Headers: <code>Authorization: Bearer {session_token}</code><br>
-          Body: <code>{"product_ids": [1,2], "quantities": [1,2]}</code><br>
-          Returns: <code>order_token</code> for correlation
-      </div>
-      
-      <div class="endpoint">
-          <span class="method get">GET</span> <strong>/api/orders/{order_token}</strong><br>
-          Returns: Order details and tracking info
-      </div>
-      
-      <div class="endpoint">
-          <span class="method post">POST</span> <strong>/api/http-test</strong><br>
-          Body: <code>{"session_token": "...", "user_id": 1, "correlation_id": "...", "test_message": "Hello!"}</code><br>
-          Returns: <strong>Plain HTTP text response (not JSON)</strong> with Step 2 token for next step
-      </div>
-      
-      <div class="endpoint">
-          <span class="method post">POST</span> <strong>/api/http-test-step2</strong><br>
-          Body: <code>{"session_token": "...", "user_id": 1, "correlation_id": "...", "step2_token": "..."}</code><br>
-          Returns: <strong>Plain HTTP text response (not JSON)</strong> - Requires Step 2 token from Step 1!
-      </div>
-      
-      <h2>Test Users</h2>
-      <ul>
-          <li><strong>testuser1</strong> / password: <strong>123</strong></li>
-          <li><strong>testuser2</strong> / password: <strong>456</strong></li>
-          <li><strong>adminuser</strong> / password: <strong>789</strong></li>
-      </ul>
-      
-      <script>
+    </div>
+    
+    <script>
       // Global addToCart function used by all pages
       window.addToCart = function(productId) {
           // Get all session-related data from localStorage
@@ -1436,7 +2246,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
                   // Store next step token for future correlation
                   localStorage.setItem('next_step_token', data.next_step_token);
                   
-                  alert('[OK] Body-Authenticated Success! Added ' + data.cart_item.product_name + ' to cart.\\n\\n[AUTH] Authentication Method: ALL DATA IN REQUEST BODY\\n[INFO] Session Token: ' + token.substring(0, 20) + '...\\n[ID] User ID: ' + userId + '\\n[SYNC] Correlation ID: ' + correlationId.substring(0, 20) + '...\\n\\n[PACKAGE] Cart Item ID: ' + data.cart_item.cart_item_id + '\\n[USER] User: ' + data.cart_item.username + '\\n[MONEY] Subtotal: $' + data.cart_item.subtotal + '\\n[TARGET] Next Step Token: ' + data.next_step_token + '\\n\\n[SPARKLE] This request used NO Authorization headers - all session/auth data was in the request body for advanced JMeter correlation testing!');
+                  alert('[OK] Body-Authenticated Success! Added ' + data.cart_item.product_name + ' to cart.\\n\\n[AUTH] Authentication Method: ALL DATA IN REQUEST BODY\\n[INFO] Session Token: ' + token.substring(0, 20) + '...\\n[ID] User ID: ' + userId + '\\n[SYNC] Correlation ID: ' + correlationId.substring(0, 20) + '...\\n\\n[PACKAGE] Cart Item ID: ' + data.cart_item.cart_item_id + '\\n[USER] User: ' + data.cart_item.username + '\\n[MONEY] Subtotal: $' + data.cart_item.subtotal + '\\n[TARGET] Next Step Token: ' + data.next_step_token + '\\n\\n[SPARKLE] This request used NO Authorization headers - all session/auth data was in the request body for advanced correlation testing!');
               } else {
                   alert('[ERROR] Error: ' + data.error + '\\n\\nMessage: ' + (data.message || 'Unknown error') + '\\n\\nMake sure you have all required fields: session_token, user_id, correlation_id');
               }
@@ -1462,34 +2272,41 @@ Congratulations! Your JMeter correlation is working perfectly!`;
   </html>`;
   }
   
-  function getLoginPage() {
-    return `<!DOCTYPE html>
-  <html>
-  <head>
-      <title>Login - JMeter Test Demo</title>
-      <style>
-          body { font-family: Arial, sans-serif; max-width: 400px; margin: 100px auto; padding: 20px; }
-          form { background: #f5f5f5; padding: 20px; border-radius: 5px; }
-          input { width: 100%; padding: 10px; margin: 5px 0; border: 1px solid #ddd; border-radius: 3px; box-sizing: border-box; }
-          button { background: #0366d6; color: white; padding: 10px 20px; border: none; border-radius: 3px; cursor: pointer; }
-          button:hover { background: #0256d0; }
-          .result { margin-top: 20px; padding: 10px; border-radius: 3px; }
-          a { color: #0366d6; }
-      </style>
-  </head>
-  <body>
-      <h2>Login Form</h2>
-      <form onsubmit="handleLogin(event)">
-          <input type="text" id="username" placeholder="Username" required>
-          <input type="password" id="password" placeholder="Password" required>
-          <button type="submit">Login</button>
-      </form>
-      
-      <div id="result"></div>
-      
-      <p><a href="/">← Back to Home</a></p>
-      
-      <script>
+function getLoginPage() {
+  return `<!DOCTYPE html>
+<html>
+<head>
+    <title>Login - LoadMagic Test Demo</title>
+    <style>
+      ${BASE_STYLES}
+      form {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .form-card {
+        max-width: 520px;
+      }
+    </style>
+</head>
+<body class="page">
+    ${renderHeader('Login', 'Generate fresh tokens for correlation')}
+    <div class="content">
+      <div class="card form-card">
+        <h2 class="section-title">Login Form</h2>
+        <form onsubmit="handleLogin(event)">
+            <input type="text" id="username" placeholder="Username" required>
+            <input type="password" id="password" placeholder="Password" required>
+            <button type="submit">Login</button>
+        </form>
+        
+        <div id="result"></div>
+        
+        <p><a href="/">← Back to Home</a></p>
+      </div>
+    </div>
+    
+    <script>
       async function handleLogin(event) {
           event.preventDefault();
           const username = document.getElementById('username').value;
@@ -1586,39 +2403,36 @@ Congratulations! Your JMeter correlation is working perfectly!`;
   </html>`;
   }
   
-  function getDashboardPage() {
-    return `<!DOCTYPE html>
-  <html>
-  <head>
-      <title>Dashboard - JMeter Test Demo</title>
-      <style>
-          body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
-          .session-info { background: #e8f5e8; padding: 20px; border-radius: 5px; margin-bottom: 20px; }
-          .auth-test { background: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0; }
-          .endpoint-test { margin: 15px 0; }
-          button { background: #0366d6; color: white; padding: 10px 15px; border: none; border-radius: 3px; cursor: pointer; margin: 5px; }
-          button:hover { background: #0256d0; }
-          .success { background: #d4edda; color: #155724; padding: 10px; border-radius: 3px; margin: 10px 0; }
-          .error { background: #f8d7da; color: #721c24; padding: 10px; border-radius: 3px; margin: 10px 0; }
-          .info { background: #d1ecf1; color: #0c5460; padding: 10px; border-radius: 3px; margin: 10px 0; }
-          pre { background: #f8f9fa; padding: 10px; border-radius: 3px; overflow-x: auto; }
-          a { color: #0366d6; }
-      </style>
-  </head>
-  <body>
-      <h2>[AUTH] Authenticated Dashboard</h2>
-      
-      <div class="session-info" id="session-info">
+function getDashboardPage() {
+  return `<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard - LoadMagic Test Demo</title>
+    <style>
+      ${BASE_STYLES}
+      .endpoint-test {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin: 10px 0;
+      }
+    </style>
+</head>
+<body class="page">
+    ${renderHeader('Dashboard', 'Authenticated flows and multi-step tokens')}
+    <div class="content">
+      <div class="card session-info" id="session-info">
           <h3>Session Information</h3>
           <p>Loading session data...</p>
-          <p id="session-warning" style="display:none; color:#b91c1c; font-weight:600; margin-top:8px;">
+          <p id="session-warning" style="display:none; color:#fbbf24; font-weight:600; margin-top:8px;">
             No session token detected. Please login first (Home → Login) to generate fresh tokens. Clear browser storage if you suspect stale data.
           </p>
       </div>
       
-      <div class="auth-test">
+      <div class="card auth-test">
           <h3>Test Authenticated Endpoints</h3>
-          <p>These endpoints require your session token for JMeter correlation testing:</p>
+          <p>These endpoints require your session token for correlation testing:</p>
           
           <div class="endpoint-test">
               <button onclick="testProfile()">Test GET /api/user/profile</button>
@@ -1637,7 +2451,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           
           <div class="endpoint-test">
               <button onclick="testHttpTest()" style="background: #6f42c1;">Test POST /api/http-test</button>
-              <span>HTTP-only response endpoint (perfect for JMeter HTTP testing)</span>
+              <span>HTTP-only response endpoint (perfect for HTTP testing)</span>
           </div>
           
           <div class="endpoint-test">
@@ -1651,11 +2465,12 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           </div>
       </div>
       
-      <div id="test-results"></div>
+      <div class="card" id="test-results"></div>
       
       <p><a href="/">← Back to Home</a> | <a href="/login">Login</a></p>
-      
-      <script>
+    </div>
+    
+    <script>
       // Check for session token on page load
       window.onload = function() {
           const token = localStorage.getItem('session_token');
@@ -1862,7 +2677,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
                       }
                   }
                   
-                  showResult('success', 'HTTP Test Step 1 successful! Step 2 token extracted and Step 2 button enabled. This endpoint returns plain HTTP text (not JSON) - perfect for JMeter HTTP response testing.', {
+                  showResult('success', 'HTTP Test Step 1 successful! Step 2 token extracted and Step 2 button enabled. This endpoint returns plain HTTP text (not JSON) - perfect for HTTP response testing.', {
                       status: response.status,
                       statusText: response.statusText,
                       headers: Object.fromEntries(response.headers.entries()),
@@ -1986,60 +2801,61 @@ Congratulations! Your JMeter correlation is working perfectly!`;
   </html>`;
   }
 
-  function getDashboard1Page() {
-    return `<!DOCTYPE html>
-  <html>
-  <head>
-      <title>Dashboard1 - Short Value Correlation Test</title>
-      <style>
-          body { font-family: Arial, sans-serif; max-width: 700px; margin: 50px auto; padding: 20px; background: #f9f9f9; }
-          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
-          .session-info { background: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #667eea; }
-          .test-section { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-          .step-box { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0; border-left: 3px solid #28a745; }
-          button {
-              background: #667eea;
-              color: white;
-              padding: 12px 24px;
-              border: none;
-              border-radius: 5px;
-              cursor: pointer;
-              font-size: 14px;
-              font-weight: 500;
-              margin: 5px;
-              transition: background 0.3s;
-          }
-          button:hover { background: #5568d3; }
-          button:disabled { background: #ccc; cursor: not-allowed; }
-          .btn-step2 { background: #28a745; }
-          .btn-step2:hover { background: #218838; }
-          .success { background: #d4edda; color: #155724; padding: 12px; border-radius: 5px; margin: 10px 0; border-left: 4px solid #28a745; }
-          .error { background: #f8d7da; color: #721c24; padding: 12px; border-radius: 5px; margin: 10px 0; border-left: 4px solid #dc3545; }
-          .info { background: #d1ecf1; color: #0c5460; padding: 12px; border-radius: 5px; margin: 10px 0; border-left: 4px solid #17a2b8; }
-          pre { background: #f8f9fa; padding: 10px; border-radius: 3px; overflow-x: auto; font-size: 12px; }
-          .highlight { background: #fff3cd; padding: 2px 6px; border-radius: 3px; font-weight: bold; color: #856404; }
-          a { color: #667eea; text-decoration: none; }
-          a:hover { text-decoration: underline; }
-          .nav-links { margin-top: 20px; padding-top: 20px; border-top: 2px solid #e9ecef; }
-      </style>
-  </head>
-  <body>
-      <div class="header">
-          <h2>[TARGET] Dashboard1 - Short Value Correlation Test</h2>
-          <p style="margin: 5px 0; opacity: 0.9;">Simplified flow for testing JMeter correlation with short dynamic values</p>
+function getDashboard1Page() {
+  return `<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard1 - Short + Viewstate Correlation Test</title>
+    <style>
+      ${BASE_STYLES}
+      .header {
+        background: linear-gradient(135deg, rgba(47, 177, 255, 0.18), rgba(111, 214, 255, 0.16));
+        border: 1px solid var(--border);
+      }
+      .step-box {
+        border-left: 4px solid var(--accent);
+      }
+      .step-box.heavy {
+        border-left-color: var(--warn);
+        background: linear-gradient(120deg, rgba(47, 177, 255, 0.08), rgba(0, 0, 0, 0));
+      }
+      .btn-step2 { background: var(--success); color: #07141f; }
+      .btn-step2:hover { opacity: 0.95; }
+      .btn-step3 { background: var(--warn); color: #0b1220; }
+      .btn-step4 { background: var(--accent-2); color: #0b1220; }
+      .nav-links {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+      }
+      .note { color: var(--muted); font-size: 14px; }
+    </style>
+</head>
+<body class="page">
+    ${renderHeader('Dashboard1', 'Short + large state correlation test')}
+    <div class="content">
+      <div class="card header">
+          <h2>[TARGET] Dashboard1 - Short + Viewstate Correlation Test</h2>
+          <p style="margin: 5px 0; opacity: 0.9;">Short IDs plus ASP.NET-style __VIEWSTATE bloat to pressure-test extraction logic</p>
+          <div class="pill">Edge cases: tiny IDs + 60kb+ state</div>
       </div>
 
-      <div class="session-info" id="session-info">
+      <div class="card session-info" id="session-info">
           <h3>Session Information</h3>
           <p>Loading session data...</p>
-          <p id="session-warning" style="display:none; color:#b91c1c; font-weight:600; margin-top:8px;">
+          <p id="session-warning" style="display:none; color:#fbbf24; font-weight:600; margin-top:8px;">
             No session token detected. Please login first (Home → Login) to generate fresh tokens. Clear browser storage if you suspect stale data.
           </p>
       </div>
 
-      <div class="test-section">
+      <div class="card test-section">
           <h3>[INFO] Test Flow Overview</h3>
-          <p>This dashboard tests correlation with <strong>short values</strong> (like "1", "2", "3") instead of long tokens.</p>
+          <p>Two correlation edge cases in one place: tiny numeric IDs (Steps 1-2), oversized signed viewstate (Steps 3-4), and bulk JSON payloads (Steps 5-6).</p>
+          <ul>
+            <li><strong>Short values:</strong> 1-9 IDs that break naive regexes.</li>
+            <li><strong>Large viewstate:</strong> ~500KB base64 payload with nonce + signature that must be replayed intact.</li>
+            <li><strong>Bulk JSON:</strong> 500KB+ request bodies with hundreds of items and a buried validation code.</li>
+          </ul>
 
           <div class="step-box">
               <h4>Step 1: Get Dynamic shortID</h4>
@@ -2051,20 +2867,55 @@ Congratulations! Your JMeter correlation is working perfectly!`;
               <h4>Step 2: Use Dynamic shortID</h4>
               <p>Call <code>POST /api/dashboard1/step2</code> with the shortID from Step 1</p>
               <button onclick="runStep2()" class="btn-step2" id="step2Button" disabled>▶ Run Step 2</button>
-              <small style="display: block; margin-top: 5px; color: #666;">Enabled after Step 1 completes</small>
+              <small style="display: block; margin-top: 5px; color: var(--muted);">Enabled after Step 1 completes</small>
+          </div>
+
+          <div class="step-box heavy">
+              <h4>Step 3: Generate Large Viewstate</h4>
+              <p>Call <code>POST /api/dashboard1/step3</code> with full session data to generate a signed, ~530KB <code>__VIEWSTATE</code>-style payload. Capture the base64 value for replay.</p>
+              <button onclick="runStep3()" class="btn-step3" id="step3Button">▶ Run Step 3</button>
+              <small class="note">Requires session_token + session_id + user_id; ~400KB raw / ~530KB base64 (exceeds LLM token limits).</small>
+          </div>
+
+          <div class="step-box heavy">
+              <h4>Step 4: Replay Viewstate</h4>
+              <p>Call <code>POST /api/dashboard1/step4</code> with the exact viewstate from Step 3. Server validates signature, size (&gt;=60kb), and embedded session metadata.</p>
+              <button onclick="runStep4()" class="btn-step4" id="step4Button" disabled>▶ Run Step 4</button>
+              <small class="note">Enabled after Step 3 succeeds</small>
+          </div>
+
+          <div class="step-box heavy">
+              <h4>Step 5: Send Huge JSON Payload + Large Response</h4>
+              <p>Call <code>POST /api/dashboard1/step5</code> with 500KB+ JSON (800+ items). Response returns ~400KB+ with batch_id and validation code buried in the large response.</p>
+              <button onclick="runStep5()" class="btn-step3" id="step5Button">▶ Run Step 5</button>
+              <small class="note">Client sends ~800KB request; server returns ~400KB response (both exceed LLM token limits).</small>
+          </div>
+
+          <div class="step-box heavy">
+              <h4>Step 6: Validate Batch Correlation</h4>
+              <p>Call <code>POST /api/dashboard1/step6</code> with the batch_id + validation_code from Step 5. Server recomputes and confirms correctness.</p>
+              <button onclick="runStep6()" class="btn-step4" id="step6Button" disabled>▶ Run Step 6</button>
+              <small class="note">Enabled after Step 5 succeeds</small>
           </div>
       </div>
 
-      <div id="test-results"></div>
+      <div class="card" id="test-results"></div>
 
-      <div class="nav-links">
+      <div class="nav-links card">
           <a href="/">← Home</a> |
           <a href="/login">Login</a> |
           <a href="/dashboard">Main Dashboard</a>
       </div>
+    </div>
 
-      <script>
+    <script>
       let extractedShortID = null;
+      let extractedViewState = null;
+      let viewStateMeta = null;
+      let extractedBatchId = null;
+      let extractedBatchCode = null;
+      let extractedPivotItemId = null;
+      let extractedBatchTxCount = null;
 
       function refreshSessionInfo() {
           const token = localStorage.getItem('session_token');
@@ -2102,6 +2953,46 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       window.onload = function() {
           refreshSessionInfo();
       };
+
+function buildLargeTransactions(count = 800, fillerLength = 5000, targetBytes = 800000) {
+    const payload = [];
+    const seed = Date.now();
+    const fillerUnit = 'TXNLOAD';
+    let filler = (fillerUnit.repeat(Math.ceil(fillerLength / fillerUnit.length))).slice(0, fillerLength);
+
+    const build = (startIndex, total) => {
+        for (let i = 0; i < total; i++) {
+            const idx = startIndex + i;
+            payload.push({
+                id: 'txn_' + seed + '_' + idx,
+                amount: 1000 + idx,
+                currency: 'USD',
+                description: 'Large payload item ' + idx,
+                metadata: {
+                    client: 'client_' + ((idx % 5) + 1),
+                    route: 'edge-case-bulk',
+                    idx,
+                    filler
+                }
+            });
+        }
+    };
+
+    build(0, count);
+
+    let size = JSON.stringify(payload).length;
+    let iter = 0;
+    while (size < targetBytes && iter < 4) {
+        // increase filler and append more items until we meet target size
+        fillerLength += 1000;
+        filler = (fillerUnit.repeat(Math.ceil(fillerLength / fillerUnit.length))).slice(0, fillerLength);
+        build(payload.length, 100);
+        size = JSON.stringify(payload).length;
+        iter++;
+    }
+
+    return { payload, size };
+}
 
       async function runStep1() {
           const token = localStorage.getItem('session_token');
@@ -2196,6 +3087,223 @@ Congratulations! Your JMeter correlation is working perfectly!`;
           }
       }
 
+      async function runStep3() {
+          const token = localStorage.getItem('session_token');
+          const userId = localStorage.getItem('user_id');
+          const sessionId = localStorage.getItem('session_id');
+
+          if (!token || !userId || !sessionId) {
+              showResult('error', 'Missing session data. Please login first (needs session_token, user_id, session_id).');
+              const warning = document.getElementById('session-warning');
+              if (warning) warning.style.display = 'block';
+              return;
+          }
+
+          try {
+              showResult('info', '[ASYNC] Running Step 3: Generating large, signed viewstate (~65kb)...');
+
+              const response = await fetch('/api/dashboard1/step3', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      session_token: token,
+                      user_id: parseInt(userId),
+                      session_id: sessionId
+                  })
+              });
+
+              const data = await response.json();
+
+              if (response.ok && data.success && data.viewstate) {
+                  extractedViewState = data.viewstate;
+                  viewStateMeta = {
+                      base64_length: data.viewstate_base64_length,
+                      raw_length: data.viewstate_raw_length,
+                      signature: data.signature,
+                      signature_hint: data.signature_hint,
+                      timestamp: data.timestamp
+                  };
+
+                  const step4Button = document.getElementById('step4Button');
+                  if (step4Button) {
+                      step4Button.disabled = false;
+                  }
+
+                  showResult('success', '[OK] Step 3 complete. Large viewstate captured.', {
+                      base64_length: data.viewstate_base64_length,
+                      raw_length: data.viewstate_raw_length,
+                      signature_hint: data.signature_hint,
+                      preview: data.viewstate.substring(0, 120) + '...'
+                  });
+              } else {
+                  extractedViewState = null;
+                  viewStateMeta = null;
+                  const step4Button = document.getElementById('step4Button');
+                  if (step4Button) {
+                      step4Button.disabled = true;
+                  }
+                  showResult('error', 'Step 3 failed: ' + (data.error || 'Unknown error'), data);
+              }
+          } catch (error) {
+              showResult('error', 'Network error in Step 3: ' + error.message);
+          }
+      }
+
+      async function runStep4() {
+          const token = localStorage.getItem('session_token');
+          const userId = localStorage.getItem('user_id');
+          const sessionId = localStorage.getItem('session_id');
+
+          if (!token || !userId || !sessionId) {
+              showResult('error', 'Missing session data. Please login first.');
+              const warning = document.getElementById('session-warning');
+              if (warning) warning.style.display = 'block';
+              return;
+          }
+
+          if (!extractedViewState) {
+              showResult('error', 'No viewstate available. Run Step 3 to capture the large state first.');
+              return;
+          }
+
+          try {
+              showResult('info', '[ASYNC] Running Step 4: Replaying large viewstate for validation...');
+
+              const response = await fetch('/api/dashboard1/step4', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      session_token: token,
+                      user_id: parseInt(userId),
+                      session_id: sessionId,
+                      viewstate: extractedViewState
+                  })
+              });
+
+              const data = await response.json();
+
+              if (response.ok && data.success) {
+                  showResult('success', '[OK] Step 4 completed. Large viewstate validated with signature + size checks.', data);
+              } else {
+              showResult('error', 'Step 4 failed: ' + (data.error || 'Unknown error'), data);
+              }
+          } catch (error) {
+              showResult('error', 'Network error in Step 4: ' + error.message);
+          }
+      }
+
+      async function runStep5() {
+          const token = localStorage.getItem('session_token');
+          const userId = localStorage.getItem('user_id');
+          const sessionId = localStorage.getItem('session_id');
+
+          if (!token || !userId || !sessionId) {
+              showResult('error', 'Missing session data. Please login first.');
+              const warning = document.getElementById('session-warning');
+              if (warning) warning.style.display = 'block';
+              return;
+          }
+
+          const { payload, size } = buildLargeTransactions();
+
+          try {
+              showResult('info', '[ASYNC] Running Step 5: Sending ' + size.toLocaleString() + ' bytes of JSON...');
+
+              const response = await fetch('/api/dashboard1/step5', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      session_token: token,
+                      user_id: parseInt(userId),
+                      session_id: sessionId,
+                      transactions: payload,
+                      meta: {
+                          client_request_id: 'bulk_' + Date.now(),
+                          approx_size: size
+                      }
+                  })
+              });
+
+              const data = await response.json();
+
+              if (response.ok && data.success) {
+                  extractedBatchId = data.batch_id;
+                  extractedBatchCode = data.validation_code;
+                  extractedPivotItemId = data.pivot_item_id;
+                  extractedBatchTxCount = data.transactions_count;
+
+                  const step6Button = document.getElementById('step6Button');
+                  if (step6Button) {
+                      step6Button.disabled = false;
+                  }
+
+                  showResult('success', '[OK] Step 5 completed. Batch + validation code captured.', {
+                      batch_id: data.batch_id,
+                      pivot_item_id: data.pivot_item_id,
+                      validation_code_hint: data.validation_code.substring(0, 24) + '...',
+                      transactions_count: data.transactions_count,
+                      payload_bytes: data.payload_bytes
+                  });
+              } else {
+                  extractedBatchId = null;
+                  extractedBatchCode = null;
+                  extractedPivotItemId = null;
+                  extractedBatchTxCount = null;
+                  const step6Button = document.getElementById('step6Button');
+                  if (step6Button) step6Button.disabled = true;
+                  showResult('error', 'Step 5 failed: ' + (data.error || 'Unknown error'), data);
+              }
+          } catch (error) {
+              showResult('error', 'Network error in Step 5: ' + error.message);
+          }
+      }
+
+      async function runStep6() {
+          const token = localStorage.getItem('session_token');
+          const userId = localStorage.getItem('user_id');
+          const sessionId = localStorage.getItem('session_id');
+
+          if (!token || !userId || !sessionId) {
+              showResult('error', 'Missing session data. Please login first.');
+              const warning = document.getElementById('session-warning');
+              if (warning) warning.style.display = 'block';
+              return;
+          }
+
+          if (!extractedBatchId || !extractedBatchCode || !extractedPivotItemId || !extractedBatchTxCount) {
+              showResult('error', 'Missing batch data. Run Step 5 first to capture batch_id and validation_code.');
+              return;
+          }
+
+          try {
+              showResult('info', '[ASYNC] Running Step 6: Validating batch correlation...');
+
+              const response = await fetch('/api/dashboard1/step6', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      session_token: token,
+                      user_id: parseInt(userId),
+                      session_id: sessionId,
+                      batch_id: extractedBatchId,
+                      validation_code: extractedBatchCode,
+                      pivot_item_id: extractedPivotItemId,
+                      transactions_count: extractedBatchTxCount
+                  })
+              });
+
+              const data = await response.json();
+
+              if (response.ok && data.success) {
+                  showResult('success', '[OK] Step 6 completed. Batch validation confirmed.', data);
+              } else {
+                  showResult('error', 'Step 6 failed: ' + (data.error || 'Unknown error'), data);
+              }
+          } catch (error) {
+              showResult('error', 'Network error in Step 6: ' + error.message);
+          }
+      }
+
       function showResult(type, message, data = null) {
           const resultDiv = document.getElementById('test-results');
           const timestamp = new Date().toLocaleTimeString();
@@ -2213,86 +3321,80 @@ Congratulations! Your JMeter correlation is working perfectly!`;
   </html>`;
   }
 
-  function getCheckoutPage() {
-    return `<!DOCTYPE html>
-  <html>
-  <head>
-      <title>Checkout - JMeter Test Demo</title>
-      <style>
-          body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
-          .user-status { background: #e8f5e8; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-          .not-logged-in { background: #fff3cd; color: #856404; }
-          .logged-in { background: #d4edda; color: #155724; }
-          .checkout-section { background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 15px 0; }
-          .form-group { margin: 15px 0; }
-          label { display: block; font-weight: bold; margin-bottom: 5px; }
-          input, select, textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 3px; box-sizing: border-box; }
-          button { background: #28a745; color: white; padding: 10px 20px; border: none; border-radius: 3px; cursor: pointer; margin: 5px; }
-          button:hover { background: #218838; }
-          .correlation-info { background: #e7f3ff; padding: 10px; border-radius: 3px; margin: 10px 0; font-size: 0.9em; }
-          a { color: #0366d6; }
-      </style>
-  </head>
-  <body>
-      <h2>🛒 Checkout</h2>
-      
-      <div id="user-status" class="user-status">
+function getCheckoutPage() {
+  return `<!DOCTYPE html>
+<html>
+<head>
+    <title>Checkout - LoadMagic Test Demo</title>
+    <style>
+      ${BASE_STYLES}
+      .form-group { margin: 15px 0; }
+      .checkout-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+    </style>
+</head>
+<body class="page">
+    ${renderHeader('Checkout', 'Dark-mode checkout with body-auth correlation')}
+    <div class="content">
+      <div id="user-status" class="card user-status">
           <p>Loading session status...</p>
       </div>
       
-      <div class="checkout-section">
-          <h3>[PACKAGE] Mock Cart Items</h3>
-          <div id="cart-summary">
-              <p>• Laptop Pro - $1299.99</p>
-              <p>• Wireless Mouse - $29.99</p>
-              <hr>
-              <p><strong>Total: $1329.98</strong></p>
-          </div>
-      </div>
-      
-      <div class="checkout-section">
-          <h3>💳 Payment Information</h3>
-          <div class="form-group">
-              <label>Payment Method:</label>
-              <select id="paymentMethod">
-                  <option value="credit_card">Credit Card</option>
-                  <option value="paypal">PayPal</option>
-                  <option value="bank_transfer">Bank Transfer</option>
-              </select>
-          </div>
-          <div class="form-group">
-              <label>Card Number:</label>
-              <input type="text" id="cardNumber" placeholder="1234 5678 9012 3456" maxlength="19">
-          </div>
-      </div>
-      
-      <div class="checkout-section">
-          <h3>📍 Shipping Address</h3>
-          <div class="form-group">
-              <label>Full Name:</label>
-              <input type="text" id="fullName" placeholder="John Doe">
-          </div>
-          <div class="form-group">
-              <label>Address:</label>
-              <textarea id="address" rows="3" placeholder="123 Main St\nAnytown, ST 12345"></textarea>
-          </div>
+      <div class="checkout-grid">
+        <div class="checkout-section">
+            <h3>[PACKAGE] Mock Cart Items</h3>
+            <div id="cart-summary">
+                <p>• Laptop Pro - $1299.99</p>
+                <p>• Wireless Mouse - $29.99</p>
+                <hr>
+                <p><strong>Total: $1329.98</strong></p>
+            </div>
+        </div>
+        
+        <div class="checkout-section">
+            <h3>💳 Payment Information</h3>
+            <div class="form-group">
+                <label>Payment Method:</label>
+                <select id="paymentMethod">
+                    <option value="credit_card">Credit Card</option>
+                    <option value="paypal">PayPal</option>
+                    <option value="bank_transfer">Bank Transfer</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Card Number:</label>
+                <input type="text" id="cardNumber" placeholder="1234 5678 9012 3456" maxlength="19">
+            </div>
+        </div>
+        
+        <div class="checkout-section">
+            <h3>📍 Shipping Address</h3>
+            <div class="form-group">
+                <label>Full Name:</label>
+                <input type="text" id="fullName" placeholder="John Doe">
+            </div>
+            <div class="form-group">
+                <label>Address:</label>
+                <textarea id="address" rows="3" placeholder="123 Main St\nAnytown, ST 12345"></textarea>
+            </div>
+        </div>
       </div>
       
       <div class="correlation-info">
-          <h4>[SYNC] JMeter Correlation Data (will be sent in request body):</h4>
+          <h4>[SYNC] Correlation Data (will be sent in request body):</h4>
           <div id="correlation-display">Loading correlation data...</div>
       </div>
       
-      <div style="text-align: center; margin: 30px 0;">
+      <div style="text-align: center; margin: 24px 0;">
           <button onclick="processCheckout()" id="checkoutBtn" disabled>Complete Checkout</button>
           <button onclick="goToCart()" style="background: #6c757d;">View Cart</button>
       </div>
       
-      <div id="checkout-result"></div>
+      <div class="card" id="checkout-result"></div>
       
       <p><a href="/products">← Back to Products</a> | <a href="/">Home</a></p>
-      
-      <script>
+    </div>
+    
+    <script>
       window.onload = function() {
           checkLoginStatus();
           displayCorrelationData();
@@ -2422,46 +3524,43 @@ Congratulations! Your JMeter correlation is working perfectly!`;
   </html>`;
   }
   
-  function getProductDetailPage(request) {
-    const url = new URL(request.url);
-    const productId = url.pathname.split('/').pop();
-    
-    return `<!DOCTYPE html>
-  <html>
-  <head>
-      <title>Product Details - JMeter Test Demo</title>
-      <style>
-          body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
-          .product-detail { border: 1px solid #ddd; padding: 20px; border-radius: 5px; background: #f9f9f9; }
-          .price { color: #0366d6; font-weight: bold; font-size: 1.2em; }
-          .stock-status { padding: 5px 10px; border-radius: 3px; color: white; font-weight: bold; }
-          .in_stock { background: #28a745; }
-          .low_stock { background: #ffc107; color: black; }
-          .out_of_stock { background: #dc3545; }
-          .loading { text-align: center; padding: 50px; }
-          a { color: #0366d6; }
-          button { background: #0366d6; color: white; padding: 10px 15px; border: none; border-radius: 3px; cursor: pointer; margin: 5px; }
-          button:hover { background: #0256d0; }
-          .user-status { background: #e8f5e8; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-          .not-logged-in { background: #fff3cd; color: #856404; }
-          .logged-in { background: #d4edda; color: #155724; }
-      </style>
-  </head>
-  <body>
+function getProductDetailPage(request) {
+  const url = new URL(request.url);
+  const productId = url.pathname.split('/').pop();
+  
+  return `<!DOCTYPE html>
+<html>
+<head>
+    <title>Product Details - LoadMagic Test Demo</title>
+    <style>
+      ${BASE_STYLES}
+      .product-detail { margin-top: 10px; }
+      .price { color: var(--accent); font-weight: 700; font-size: 1.2em; }
+      .stock-status { padding: 5px 10px; border-radius: 8px; color: white; font-weight: bold; }
+      .in_stock { background: #22c55e; }
+      .low_stock { background: #fbbf24; color: #0b1220; }
+      .out_of_stock { background: #ef4444; }
+      .loading { text-align: center; padding: 50px; }
+    </style>
+</head>
+<body class="page">
+    ${renderHeader('Product Details', 'View catalog entries for correlation')}
+    <div class="content">
       <h2>Product Details</h2>
       
-      <div id="user-status" class="user-status">
+      <div id="user-status" class="card user-status">
           <p>Loading user status...</p>
       </div>
       
-      <div id="product-detail" class="loading">Loading product ${productId}...</div>
+      <div id="product-detail" class="loading card">Loading product ${productId}...</div>
       
-      <div style="margin-top: 20px;">
+      <div class="card" style="margin-top: 10px;">
           <a href="/products">← Back to Products</a> | 
           <a href="/">Home</a>
       </div>
-      
-      <script>
+    </div>
+    
+    <script>
       // Check login status on page load
       window.onload = function() {
           checkLoginStatus();
@@ -2543,32 +3642,33 @@ Congratulations! Your JMeter correlation is working perfectly!`;
   </html>`;
   }
   
-  function getProductsPage() {
-    return `<!DOCTYPE html>
-  <html>
-  <head>
-      <title>Products - JMeter Test Demo</title>
-      <style>
-          body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
-          .filters { background: #f5f5f5; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
-          .product { border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 5px; }
-          .price { color: #0366d6; font-weight: bold; }
-          button { background: #0366d6; color: white; padding: 5px 10px; border: none; border-radius: 3px; cursor: pointer; }
-          button:hover { background: #0256d0; }
-          a { color: #0366d6; }
-          .user-status { background: #e8f5e8; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-          .not-logged-in { background: #fff3cd; color: #856404; }
-          .logged-in { background: #d4edda; color: #155724; }
-      </style>
-  </head>
-  <body>
+function getProductsPage() {
+  return `<!DOCTYPE html>
+<html>
+<head>
+    <title>Products - LoadMagic Test Demo</title>
+    <style>
+      ${BASE_STYLES}
+      .filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .product h4 {
+        margin-top: 0;
+      }
+    </style>
+</head>
+<body class="page">
+    ${renderHeader('Products', 'Browse catalog entries for correlation')}
+    <div class="content">
       <h2>Products Catalog</h2>
       
-      <div id="user-status" class="user-status">
+      <div id="user-status" class="card user-status">
           <p>Loading user status...</p>
       </div>
       
-      <div class="filters">
+      <div class="filters card">
           <button onclick="loadProducts()">All Products</button>
           <button onclick="loadProducts('Electronics')">Electronics</button>
           <button onclick="loadProducts('Home')">Home</button>
@@ -2579,8 +3679,9 @@ Congratulations! Your JMeter correlation is working perfectly!`;
       <div id="products">Loading...</div>
       
       <p><a href="/">← Back to Home</a></p>
-      
-      <script>
+    </div>
+    
+    <script>
       // Global addToCart function used by all pages
       window.addToCart = function(productId) {
           // Get all session-related data from localStorage
@@ -2638,7 +3739,7 @@ Congratulations! Your JMeter correlation is working perfectly!`;
                   // Store next step token for future correlation
                   localStorage.setItem('next_step_token', data.next_step_token);
                   
-                  alert('[OK] Body-Authenticated Success! Added ' + data.cart_item.product_name + ' to cart.\\n\\n[AUTH] Authentication Method: ALL DATA IN REQUEST BODY\\n[INFO] Session Token: ' + token.substring(0, 20) + '...\\n[ID] User ID: ' + userId + '\\n[SYNC] Correlation ID: ' + correlationId.substring(0, 20) + '...\\n\\n[PACKAGE] Cart Item ID: ' + data.cart_item.cart_item_id + '\\n[USER] User: ' + data.cart_item.username + '\\n[MONEY] Subtotal: $' + data.cart_item.subtotal + '\\n[TARGET] Next Step Token: ' + data.next_step_token + '\\n\\n[SPARKLE] This request used NO Authorization headers - all session/auth data was in the request body for advanced JMeter correlation testing!');
+                  alert('[OK] Body-Authenticated Success! Added ' + data.cart_item.product_name + ' to cart.\\n\\n[AUTH] Authentication Method: ALL DATA IN REQUEST BODY\\n[INFO] Session Token: ' + token.substring(0, 20) + '...\\n[ID] User ID: ' + userId + '\\n[SYNC] Correlation ID: ' + correlationId.substring(0, 20) + '...\\n\\n[PACKAGE] Cart Item ID: ' + data.cart_item.cart_item_id + '\\n[USER] User: ' + data.cart_item.username + '\\n[MONEY] Subtotal: $' + data.cart_item.subtotal + '\\n[TARGET] Next Step Token: ' + data.next_step_token + '\\n\\n[SPARKLE] This request used NO Authorization headers - all session/auth data was in the request body for advanced correlation testing!');
               } else {
                   alert('[ERROR] Error: ' + data.error + '\\n\\nMessage: ' + (data.message || 'Unknown error') + '\\n\\nMake sure you have all required fields: session_token, user_id, correlation_id');
               }

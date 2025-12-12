@@ -37,3 +37,4 @@ jobs:
           workingDirectory: './jmeter-test-demo'
           command: deploy
 
+
