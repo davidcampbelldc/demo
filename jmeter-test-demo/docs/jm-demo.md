@@ -13,6 +13,29 @@ This is a comprehensive demo application built on Cloudflare Workers designed sp
 - **Latest Deployment**: 2025-09-24T10:24:51.811Z
 - **Compatibility Date**: 2024-09-23
 
+## Private Access Gate (HAR-Friendly)
+
+This demo is protected by a lightweight cookie gate to make it harder to discover and to avoid `Authorization` headers (which many HAR exporters redact).
+
+### Configure
+
+Set the secret (one-time per environment):
+
+```bash
+wrangler secret put SITE_ACCESS_TOKEN --config jmeter-test-demo/wrangler.toml
+```
+
+Deploy:
+
+```bash
+wrangler deploy --config jmeter-test-demo/wrangler.toml
+```
+
+### Use
+
+- Browser: visit `/__access`, enter the access token once, and the Worker will set an `lm_access` cookie.
+- Tools (JMeter/Locust): first `POST /__access` with `token=...` (form or JSON) and persist cookies for subsequent requests.
+
 ## Architecture
 
 ### Backend Infrastructure
