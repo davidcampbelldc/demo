@@ -1,0 +1,9 @@
+DNS=yUi5bJzQVAm8RwWVb6zxfT-XBNqnH3dg6WC6ZhrJ
+DNS_settings=nnIsP_9DeksrXDW8Mdqbo9o2BbpmSM6j9OZCfs-v
+create_tokens=b054xQduUAcpRABLrlaqp7UT4ACB1rihn9TgHDI0
+MANAGE_WORKERS=JZa9LBAZhHkp8gDv2ZGb_10FXB5RO_jUBjul9X6v
+curl "https://api.cloudflare.com/client/v4/accounts/d8234a8f646e47abe3809473445e4d9a/tokens/verify" \
+-H "Authorization: Bearer JZa9LBAZhHkp8gDv2ZGb_10FXB5RO_jUBjul9X6v"
+PAGES_EDIT=0tkx_4kzbrc84ggkpNO9DX0yBlBG5ZKDkhZ8Xm07
+new_create_tokens=uLh0ph3zzmX5H1jctYtsC5SYP0CtTleBUJfHwllJ
+all-out-token=zym_vHqol-4qJqXbZ6s6-JVll89CdMh_Ak2W2AYD

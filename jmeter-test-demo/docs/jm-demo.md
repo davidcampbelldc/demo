@@ -17,6 +17,8 @@ This is a comprehensive demo application built on Cloudflare Workers designed sp
 
 This demo is protected by a lightweight cookie gate to make it harder to discover and to avoid `Authorization` headers (which many HAR exporters redact).
 
+When `SITE_ACCESS_CHALLENGE_EVERY_VISIT=true`, the Worker will intentionally redirect every page visit through `/__access` so the access gate always appears in captured network traffic (and you’ll re-submit the access token per visit).
+
 ### Configure
 
 Set the secret (one-time per environment):
@@ -33,8 +35,10 @@ wrangler deploy --config jmeter-test-demo/wrangler.toml
 
 ### Use
 
-- Browser: visit `/__access`, enter the access token once, and the Worker will set an `lm_access` cookie.
-- Tools (JMeter/Locust): first `POST /__access` with `token=...` (form or JSON) and persist cookies for subsequent requests.
+- Browser: visit any page (e.g. `/`). On first visit, you’ll be sent to `/__access` to enter the access token, and the Worker will set an `lm_access` cookie.
+- Tools (JMeter/Locust/K6): either follow the redirect to `/__access` automatically, or `POST /__access` with `token=...` (form or JSON) and persist cookies (`lm_access`, and `lm_access_visit` when enabled) for subsequent requests.
+
+`lm_access` is a session cookie (it clears when the browser closes / the tool run ends), so most tools should call `/__access` as a first step of each test run.
 
 ## Architecture
 

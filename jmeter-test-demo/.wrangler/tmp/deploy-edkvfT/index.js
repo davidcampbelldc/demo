@@ -1,917 +1,799 @@
-export default {
-    async fetch(request, env, ctx) {
-      const url = new URL(request.url);
-      const path = url.pathname;
-      const method = request.method;
-  
-      // CORS headers for all responses
-      const corsHeaders = {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      };
-  
-      // Handle OPTIONS requests for CORS
-      if (method === 'OPTIONS') {
-        return new Response(null, { headers: corsHeaders });
-      }
-  
-      try {
-        // Private access gate (cookie-based; avoids Authorization headers that often get redacted in HAR exports)
-        if (path === '/__access' || path === '/__access/') {
-          return await handleAccessGate(request, env, corsHeaders);
-        }
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
-        const accessGateResponse = await enforceSiteAccess(request, env, corsHeaders);
-        if (accessGateResponse) {
-          return accessGateResponse;
-        }
-
-        // Routes
-        switch (true) {
-          case path === '/' && method === 'GET':
-            return new Response(getHomePage(), { 
-              headers: { ...corsHeaders, 'Content-Type': 'text/html' } 
-            });
-  
-          case path === '/login' && method === 'GET':
-            return new Response(getLoginPage(), { 
-              headers: { ...corsHeaders, 'Content-Type': 'text/html' } 
-            });
-  
-          case path === '/products' && method === 'GET':
-            return new Response(getProductsPage(), { 
-              headers: { ...corsHeaders, 'Content-Type': 'text/html' } 
-            });
-  
-          case path.startsWith('/product/') && method === 'GET':
-            return new Response(getProductDetailPage(request), { 
-              headers: { ...corsHeaders, 'Content-Type': 'text/html' } 
-            });
-  
-          case path === '/dashboard' && method === 'GET':
-            return new Response(getDashboardPage(), {
-              headers: { ...corsHeaders, 'Content-Type': 'text/html' }
-            });
-
-          case path === '/dashboard1' && method === 'GET':
-            return new Response(getDashboard1Page(), {
-              headers: { ...corsHeaders, 'Content-Type': 'text/html' }
-            });
-
-          case path === '/api/login' && method === 'POST':
-            return await handleLogin(request, env, corsHeaders);
-  
-          case path === '/api/products' && method === 'GET':
-            return await handleGetProducts(request, env, corsHeaders);
-  
-          case path.startsWith('/api/products/') && method === 'GET':
-            return await handleGetSingleProduct(request, env, corsHeaders);
-  
-          case path === '/api/user/profile' && method === 'POST':
-            return await handleGetProfile(request, env, corsHeaders);
-  
-          case path === '/api/orders' && method === 'POST':
-            return await handleCreateOrder(request, env, corsHeaders);
-  
-          case path === '/checkout' && method === 'GET':
-            return new Response(getCheckoutPage(), { 
-              headers: { ...corsHeaders, 'Content-Type': 'text/html' } 
-            });
-  
-          case path === '/api/checkout/process' && method === 'POST':
-            return await handleProcessCheckout(request, env, corsHeaders);
-  
-          case path === '/api/cart/add' && method === 'POST':
-            return await handleAddToCart(request, env, corsHeaders);
-  
-          case path === '/api/cart' && method === 'GET':
-            return await handleGetCart(request, env, corsHeaders);
-  
-          case path.startsWith('/api/orders/') && method === 'GET':
-            return await handleGetOrder(request, env, corsHeaders);
-
-          case path === '/api/http-test' && method === 'POST':
-            return await handleHttpTest(request, env, corsHeaders);
-
-          case path === '/api/http-test-step2' && method === 'POST':
-            return await handleHttpTestStep2(request, env, corsHeaders);
-
-          case path === '/api/dashboard1/step1' && method === 'POST':
-            return await handleDashboard1Step1(request, env, corsHeaders);
-
-          case path === '/api/dashboard1/step2' && method === 'POST':
-            return await handleDashboard1Step2(request, env, corsHeaders);
-
-          case path === '/api/dashboard1/step3' && method === 'POST':
-            return await handleDashboard1Step3(request, env, corsHeaders);
-
-          case path === '/api/dashboard1/step4' && method === 'POST':
-            return await handleDashboard1Step4(request, env, corsHeaders);
-
-          case path === '/api/dashboard1/step5' && method === 'POST':
-            return await handleDashboard1Step5(request, env, corsHeaders);
-
-          case path === '/api/dashboard1/step6' && method === 'POST':
-            return await handleDashboard1Step6(request, env, corsHeaders);
-
-          case path === '/favicon.ico' && method === 'GET':
-            if (!env.ASSETS) {
-              return new Response('Static assets not configured', { status: 500, headers: corsHeaders });
-            }
-            return await env.ASSETS.fetch(new Request(new URL('/images/favicon.png', request.url), request));
-
-          case path.startsWith('/images/') && method === 'GET':
-            if (!env.ASSETS) {
-              return new Response('Static assets not configured', { status: 500, headers: corsHeaders });
-            }
-            return await env.ASSETS.fetch(new Request(new URL(path, request.url), request));
-
-          case path.startsWith('/static/') && method === 'GET':
-            if (!env.ASSETS) {
-              return new Response('Static assets not configured', { status: 500, headers: corsHeaders });
-            }
-            // Strip the /static prefix to match asset root
-            const assetUrl = new URL(request.url);
-            assetUrl.pathname = path.replace(/^\/static/, '');
-            return await env.ASSETS.fetch(new Request(assetUrl, request));
-
-          default:
-            return new Response('Not Found', { 
-              status: 404, 
-              headers: corsHeaders 
-            });
-        }
-      } catch (error) {
-        console.error('Worker error:', error);
-        return new Response(JSON.stringify({ error: 'Internal server error' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-    },
-  };
-  
-  // API Handlers
-  async function handleLogin(request, env, corsHeaders) {
-    try {
-      const body = await request.json();
-      const { username, password } = body;
-  
-      if (!username || !password) {
-        return new Response(JSON.stringify({ error: 'Username and password required' }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-  
-      // Check if database is available
-      if (!env.DB) {
-        return new Response(JSON.stringify({ 
-          error: 'Database not available',
-          debug: 'env.DB is undefined - check wrangler.toml binding' 
-        }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-  
-      // Query database for user
-      const result = await env.DB.prepare(
-        'SELECT id, username, email FROM users WHERE username = ? AND password_hash = ?'
-      ).bind(username, `hash${password}`).first();
-  
-      if (!result) {
-        return new Response(JSON.stringify({ error: 'Invalid credentials' }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-  
-      // Generate all required tokens for correlation testing
-      const sessionToken = generateToken();
-      const sessionId = `sess_${result.id}_${Date.now()}`;
-      const csrfToken = generateToken();
-      const correlationId = generateToken();
-
-      // Update user with all session tokens for validation
-      await env.DB.prepare(
-        'UPDATE users SET session_token = ?, session_id = ?, csrf_token = ?, correlation_id = ? WHERE id = ?'
-      ).bind(sessionToken, sessionId, csrfToken, correlationId, result.id).run();
-
-      return new Response(JSON.stringify({
-        success: true,
-        user_id: result.id,
-        username: result.username,
-        email: result.email,
-        session_token: sessionToken,
-        session_id: sessionId, // Additional session ID for payload correlation
-        csrf_token: csrfToken, // CSRF token for payload correlation
-        expires_in: 3600,
-        server_timestamp: new Date().toISOString(),
-        correlation_id: correlationId // Correlation ID that should be sent back in requests
-      }), {
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-          'Set-Cookie': `session_id=${sessionId}; Path=/; HttpOnly; SameSite=Lax`,
-          // Add tokens to headers for correlation (in case body isn't captured)
-          'X-Session-Token': sessionToken,
-          'X-Session-Id': sessionId,
-          'X-CSRF-Token': csrfToken,
-          'X-Correlation-Id': correlationId,
-          'X-User-Id': result.id.toString()
-        }
-      });
-    } catch (error) {
-      console.error('Error in handleLogin:', error);
-      return new Response(JSON.stringify({ 
-        error: error.message,
-        debug: {
-          stack: error.stack,
-          dbAvailable: !!env.DB
-        }
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
+// src/index.js
+var index_default = {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const method = request.method;
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization"
+    };
+    if (method === "OPTIONS") {
+      return new Response(null, { headers: corsHeaders });
     }
-  }
-  
-  async function handleGetProducts(request, env, corsHeaders) {
     try {
-      const url = new URL(request.url);
-      const category = url.searchParams.get('category');
-      
-      // Check if database is available
-      if (!env.DB) {
-        return new Response(JSON.stringify({ 
-          error: 'Database not available',
-          debug: 'env.DB is undefined - check wrangler.toml binding' 
-        }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
+      if (path === "/__access" || path === "/__access/") {
+        return await handleAccessGate(request, env, corsHeaders);
       }
-      
-      let query = 'SELECT * FROM products';
-      let params = [];
-      
-      if (category) {
-        query += ' WHERE category = ?';
-        params.push(category);
+      const accessGateResponse = await enforceSiteAccess(request, env, corsHeaders);
+      if (accessGateResponse) {
+        return accessGateResponse;
       }
-      
-      console.log('Executing query:', query, 'with params:', params);
-      const result = await env.DB.prepare(query).bind(...params).all();
-      console.log('Query result:', result);
-      
-      return new Response(JSON.stringify({
-        products: result.results || [],
-        count: (result.results || []).length,
-        debug: {
-          query: query,
-          params: params,
-          resultMeta: result.meta
-        }
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      console.error('Error in handleGetProducts:', error);
-      return new Response(JSON.stringify({ 
-        error: error.message,
-        debug: {
-          stack: error.stack,
-          dbAvailable: !!env.DB
-        }
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
-  }
-  
-  async function handleGetSingleProduct(request, env, corsHeaders) {
-    try {
-      const url = new URL(request.url);
-      const productId = url.pathname.split('/').pop();
-      
-      // Check if database is available
-      if (!env.DB) {
-        return new Response(JSON.stringify({ 
-          error: 'Database not available',
-          debug: 'env.DB is undefined - check wrangler.toml binding' 
-        }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-      
-      // Validate product ID
-      if (!productId || isNaN(productId)) {
-        return new Response(JSON.stringify({ 
-          error: 'Invalid product ID',
-          debug: 'Product ID must be a number'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-      
-      console.log('Fetching product with ID:', productId);
-      const result = await env.DB.prepare(
-        'SELECT * FROM products WHERE id = ?'
-      ).bind(productId).first();
-      
-      if (!result) {
-        return new Response(JSON.stringify({ 
-          error: 'Product not found',
-          product_id: productId
-        }), {
-          status: 404,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-      
-      // Add some additional computed fields for richer data
-      const productDetails = {
-        ...result,
-        in_stock: result.stock > 0,
-        stock_status: result.stock > 50 ? 'in_stock' : result.stock > 0 ? 'low_stock' : 'out_of_stock',
-        discounted_price: result.price * 0.9, // 10% discount simulation
-        related_products: [], // Could be populated with a related products query
-        last_updated: new Date().toISOString()
-      };
-      
-      return new Response(JSON.stringify({
-        success: true,
-        product: productDetails
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      console.error('Error in handleGetSingleProduct:', error);
-      return new Response(JSON.stringify({ 
-        error: error.message,
-        debug: {
-          stack: error.stack,
-          dbAvailable: !!env.DB
-        }
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
-  }
-  
-  async function handleGetProfile(request, env, corsHeaders) {
-    try {
-      const body = await request.json();
-      const { session_token, user_id, correlation_id, session_id, csrf_token } = body;
-
-      // Require ALL session data in request body for correlation testing
-      if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token) {
-        return new Response(JSON.stringify({
-          error: 'Missing required fields',
-          required: ['session_token', 'user_id', 'correlation_id', 'session_id', 'csrf_token'],
-          message: 'All session data must be provided in request body for correlation testing'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Validate ALL session tokens from request body
-      const user = await env.DB.prepare(
-        'SELECT id, username, email FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?'
-      ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
-
-      if (!user) {
-        return new Response(JSON.stringify({
-          error: 'Invalid session data',
-          message: 'One or more session tokens are invalid or mismatched (session_token, user_id, session_id, csrf_token, or correlation_id)'
-        }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-  
-      return new Response(JSON.stringify({
-        success: true,
-        user_id: user.id,
-        username: user.username,
-        email: user.email,
-        session_info: {
-          token_verified: true,
-          correlation_id_received: correlation_id,
-          created_at: new Date().toISOString(),
-          expires_at: new Date(Date.now() + 3600000).toISOString()
-        },
-        profile_data: {
-          last_login: new Date().toISOString(),
-          account_type: user.username.includes('admin') ? 'admin' : 'standard',
-          preferences: {
-            theme: 'default',
-            notifications: true,
-            next_correlation_key: generateToken() // Key for next request
+      switch (true) {
+        case (path === "/" && method === "GET"):
+          return new Response(getHomePage(), {
+            headers: { ...corsHeaders, "Content-Type": "text/html" }
+          });
+        case (path === "/login" && method === "GET"):
+          return new Response(getLoginPage(), {
+            headers: { ...corsHeaders, "Content-Type": "text/html" }
+          });
+        case (path === "/products" && method === "GET"):
+          return new Response(getProductsPage(), {
+            headers: { ...corsHeaders, "Content-Type": "text/html" }
+          });
+        case (path.startsWith("/product/") && method === "GET"):
+          return new Response(getProductDetailPage(request), {
+            headers: { ...corsHeaders, "Content-Type": "text/html" }
+          });
+        case (path === "/dashboard" && method === "GET"):
+          return new Response(getDashboardPage(), {
+            headers: { ...corsHeaders, "Content-Type": "text/html" }
+          });
+        case (path === "/dashboard1" && method === "GET"):
+          return new Response(getDashboard1Page(), {
+            headers: { ...corsHeaders, "Content-Type": "text/html" }
+          });
+        case (path === "/api/login" && method === "POST"):
+          return await handleLogin(request, env, corsHeaders);
+        case (path === "/api/products" && method === "GET"):
+          return await handleGetProducts(request, env, corsHeaders);
+        case (path.startsWith("/api/products/") && method === "GET"):
+          return await handleGetSingleProduct(request, env, corsHeaders);
+        case (path === "/api/user/profile" && method === "POST"):
+          return await handleGetProfile(request, env, corsHeaders);
+        case (path === "/api/orders" && method === "POST"):
+          return await handleCreateOrder(request, env, corsHeaders);
+        case (path === "/checkout" && method === "GET"):
+          return new Response(getCheckoutPage(), {
+            headers: { ...corsHeaders, "Content-Type": "text/html" }
+          });
+        case (path === "/api/checkout/process" && method === "POST"):
+          return await handleProcessCheckout(request, env, corsHeaders);
+        case (path === "/api/cart/add" && method === "POST"):
+          return await handleAddToCart(request, env, corsHeaders);
+        case (path === "/api/cart" && method === "GET"):
+          return await handleGetCart(request, env, corsHeaders);
+        case (path.startsWith("/api/orders/") && method === "GET"):
+          return await handleGetOrder(request, env, corsHeaders);
+        case (path === "/api/http-test" && method === "POST"):
+          return await handleHttpTest(request, env, corsHeaders);
+        case (path === "/api/http-test-step2" && method === "POST"):
+          return await handleHttpTestStep2(request, env, corsHeaders);
+        case (path === "/api/dashboard1/step1" && method === "POST"):
+          return await handleDashboard1Step1(request, env, corsHeaders);
+        case (path === "/api/dashboard1/step2" && method === "POST"):
+          return await handleDashboard1Step2(request, env, corsHeaders);
+        case (path === "/api/dashboard1/step3" && method === "POST"):
+          return await handleDashboard1Step3(request, env, corsHeaders);
+        case (path === "/api/dashboard1/step4" && method === "POST"):
+          return await handleDashboard1Step4(request, env, corsHeaders);
+        case (path === "/api/dashboard1/step5" && method === "POST"):
+          return await handleDashboard1Step5(request, env, corsHeaders);
+        case (path === "/api/dashboard1/step6" && method === "POST"):
+          return await handleDashboard1Step6(request, env, corsHeaders);
+        case (path === "/favicon.ico" && method === "GET"):
+          if (!env.ASSETS) {
+            return new Response("Static assets not configured", { status: 500, headers: corsHeaders });
           }
-        },
-        server_metadata: {
-          request_id: generateToken(),
-          server_time: new Date().toISOString(),
-          api_version: "v1.2.3"
-        }
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
+          return await env.ASSETS.fetch(new Request(new URL("/images/favicon.png", request.url), request));
+        case (path.startsWith("/images/") && method === "GET"):
+          if (!env.ASSETS) {
+            return new Response("Static assets not configured", { status: 500, headers: corsHeaders });
+          }
+          return await env.ASSETS.fetch(new Request(new URL(path, request.url), request));
+        case (path.startsWith("/static/") && method === "GET"):
+          if (!env.ASSETS) {
+            return new Response("Static assets not configured", { status: 500, headers: corsHeaders });
+          }
+          const assetUrl = new URL(request.url);
+          assetUrl.pathname = path.replace(/^\/static/, "");
+          return await env.ASSETS.fetch(new Request(assetUrl, request));
+        default:
+          return new Response("Not Found", {
+            status: 404,
+            headers: corsHeaders
+          });
+      }
     } catch (error) {
-      return new Response(JSON.stringify({ 
-        error: 'Invalid request format',
-        message: 'Request body must contain session_token, user_id, and correlation_id'
+      console.error("Worker error:", error);
+      return new Response(JSON.stringify({ error: "Internal server error" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+  }
+};
+async function handleLogin(request, env, corsHeaders) {
+  try {
+    const body = await request.json();
+    const { username, password } = body;
+    if (!username || !password) {
+      return new Response(JSON.stringify({ error: "Username and password required" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    if (!env.DB) {
+      return new Response(JSON.stringify({
+        error: "Database not available",
+        debug: "env.DB is undefined - check wrangler.toml binding"
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const result = await env.DB.prepare(
+      "SELECT id, username, email FROM users WHERE username = ? AND password_hash = ?"
+    ).bind(username, `hash${password}`).first();
+    if (!result) {
+      return new Response(JSON.stringify({ error: "Invalid credentials" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const sessionToken = generateToken();
+    const sessionId = `sess_${result.id}_${Date.now()}`;
+    const csrfToken = generateToken();
+    const correlationId = generateToken();
+    await env.DB.prepare(
+      "UPDATE users SET session_token = ?, session_id = ?, csrf_token = ?, correlation_id = ? WHERE id = ?"
+    ).bind(sessionToken, sessionId, csrfToken, correlationId, result.id).run();
+    return new Response(JSON.stringify({
+      success: true,
+      user_id: result.id,
+      username: result.username,
+      email: result.email,
+      session_token: sessionToken,
+      session_id: sessionId,
+      // Additional session ID for payload correlation
+      csrf_token: csrfToken,
+      // CSRF token for payload correlation
+      expires_in: 3600,
+      server_timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      correlation_id: correlationId
+      // Correlation ID that should be sent back in requests
+    }), {
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+        "Set-Cookie": `session_id=${sessionId}; Path=/; HttpOnly; SameSite=Lax`,
+        // Add tokens to headers for correlation (in case body isn't captured)
+        "X-Session-Token": sessionToken,
+        "X-Session-Id": sessionId,
+        "X-CSRF-Token": csrfToken,
+        "X-Correlation-Id": correlationId,
+        "X-User-Id": result.id.toString()
+      }
+    });
+  } catch (error) {
+    console.error("Error in handleLogin:", error);
+    return new Response(JSON.stringify({
+      error: error.message,
+      debug: {
+        stack: error.stack,
+        dbAvailable: !!env.DB
+      }
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+}
+__name(handleLogin, "handleLogin");
+async function handleGetProducts(request, env, corsHeaders) {
+  try {
+    const url = new URL(request.url);
+    const category = url.searchParams.get("category");
+    if (!env.DB) {
+      return new Response(JSON.stringify({
+        error: "Database not available",
+        debug: "env.DB is undefined - check wrangler.toml binding"
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    let query = "SELECT * FROM products";
+    let params = [];
+    if (category) {
+      query += " WHERE category = ?";
+      params.push(category);
+    }
+    console.log("Executing query:", query, "with params:", params);
+    const result = await env.DB.prepare(query).bind(...params).all();
+    console.log("Query result:", result);
+    return new Response(JSON.stringify({
+      products: result.results || [],
+      count: (result.results || []).length,
+      debug: {
+        query,
+        params,
+        resultMeta: result.meta
+      }
+    }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  } catch (error) {
+    console.error("Error in handleGetProducts:", error);
+    return new Response(JSON.stringify({
+      error: error.message,
+      debug: {
+        stack: error.stack,
+        dbAvailable: !!env.DB
+      }
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+}
+__name(handleGetProducts, "handleGetProducts");
+async function handleGetSingleProduct(request, env, corsHeaders) {
+  try {
+    const url = new URL(request.url);
+    const productId = url.pathname.split("/").pop();
+    if (!env.DB) {
+      return new Response(JSON.stringify({
+        error: "Database not available",
+        debug: "env.DB is undefined - check wrangler.toml binding"
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    if (!productId || isNaN(productId)) {
+      return new Response(JSON.stringify({
+        error: "Invalid product ID",
+        debug: "Product ID must be a number"
       }), {
         status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
       });
     }
-  }
-  
-  async function handleAddToCart(request, env, corsHeaders) {
-    try {
-      const body = await request.json();
-      const { product_id, quantity = 1, session_token, user_id, correlation_id, session_id, csrf_token, client_session_id } = body;
-
-      // Require ALL session data in request body for correlation testing
-      if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token) {
-        return new Response(JSON.stringify({
-          error: 'Missing required session fields in request body',
-          required: ['session_token', 'user_id', 'correlation_id', 'session_id', 'csrf_token'],
-          message: 'All session data must be provided in request body for correlation testing',
-          example: {
-            "product_id": 1,
-            "quantity": 1,
-            "session_token": "tok_...",
-            "user_id": 1,
-            "correlation_id": "tok_...",
-            "session_id": "sess_...",
-            "csrf_token": "tok_..."
-          }
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-  
-      if (!product_id) {
-        return new Response(JSON.stringify({ error: 'Product ID is required' }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-  
-      // Check if database is available
-      if (!env.DB) {
-        return new Response(JSON.stringify({ 
-          error: 'Database not available',
-          debug: 'env.DB is undefined - check wrangler.toml binding' 
-        }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-  
-      // Validate ALL session tokens from request body
-      const user = await env.DB.prepare(
-        'SELECT id, username FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?'
-      ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
-
-      if (!user) {
-        return new Response(JSON.stringify({
-          error: 'Invalid session data in request body',
-          message: 'One or more session tokens are invalid or mismatched (session_token, user_id, session_id, csrf_token, or correlation_id)'
-        }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-  
-      if (!product_id) {
-        return new Response(JSON.stringify({ error: 'Product ID is required' }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-  
-      // Check if database is available
-      if (!env.DB) {
-        return new Response(JSON.stringify({ 
-          error: 'Database not available',
-          debug: 'env.DB is undefined - check wrangler.toml binding' 
-        }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-  
-      // Get product details
-      const product = await env.DB.prepare(
-        'SELECT * FROM products WHERE id = ?'
-      ).bind(product_id).first();
-  
-      if (!product) {
-        return new Response(JSON.stringify({ error: 'Product not found' }), {
-          status: 404,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-  
-      // Check stock availability
-      if (product.stock < quantity) {
-        return new Response(JSON.stringify({ 
-          error: 'Insufficient stock',
-          available_stock: product.stock,
-          requested_quantity: quantity
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-  
-      // Generate cart item ID for correlation testing
-      const cartItemId = generateToken();
-      const subtotal = product.price * quantity;
-      const requestId = generateToken();
-
-      // Simulate adding to cart (in real app, this would store in cart table/session)
-      const cartItem = {
-        cart_item_id: cartItemId,
-        product_id: product.id,
-        product_name: product.name,
-        price: product.price,
-        quantity: quantity,
-        subtotal: subtotal,
-        added_at: new Date().toISOString(),
-        user_id: user.id,
-        username: user.username,
-        session_reference: session_token.substring(0, 16) + "...", // Partial session token in payload
-        correlation_tracking: {
-          request_id: requestId,
-          client_correlation_id: correlation_id,
-          client_session_id: client_session_id || null,
-          server_correlation_id: generateToken()
-        }
-      };
-  
+    console.log("Fetching product with ID:", productId);
+    const result = await env.DB.prepare(
+      "SELECT * FROM products WHERE id = ?"
+    ).bind(productId).first();
+    if (!result) {
       return new Response(JSON.stringify({
-        success: true,
-        message: 'Product added to cart successfully',
-        cart_item: cartItem,
-        total_items_in_cart: Math.floor(Math.random() * 5) + 1, // Mock cart count
-        cart_total: subtotal + (Math.random() * 100), // Mock cart total
-        next_step_token: generateToken(), // Token for next step correlation
-        server_context: {
-          processing_time: Math.floor(Math.random() * 100) + 50 + "ms",
-          server_id: "srv-" + Math.random().toString(36).substr(2, 6),
-          timestamp: new Date().toISOString()
-        }
+        error: "Product not found",
+        product_id: productId
       }), {
-        headers: { 
-          ...corsHeaders, 
-          'Content-Type': 'application/json',
-          'X-Request-ID': requestId, // Custom header for correlation
-          'X-Session-Hint': session_token.substring(0, 12) // Partial session in header too
-        }
-      });
-    } catch (error) {
-      console.error('Error in handleAddToCart:', error);
-      return new Response(JSON.stringify({ 
-        error: error.message,
-        debug: {
-          stack: error.stack,
-          dbAvailable: !!env.DB
-        }
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
       });
     }
-  }
-  
-  async function handleGetCart(request, env, corsHeaders) {
-    // Check for authentication
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return new Response(JSON.stringify({ 
-        error: 'Authentication required',
-        message: 'Please login to view cart' 
-      }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
-  
-    const token = authHeader.substring(7);
-    
-    // Validate session token and get user
-    const user = await env.DB.prepare(
-      'SELECT id, username FROM users WHERE session_token = ?'
-    ).bind(token).first();
-  
-    if (!user) {
-      return new Response(JSON.stringify({ 
-        error: 'Invalid or expired session token',
-        message: 'Please login again' 
-      }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
-  
-    // Mock cart data for correlation testing
-    const mockCartItems = [
-      {
-        cart_item_id: 'cart_' + Date.now() + '_1',
-        product_id: 1,
-        product_name: 'Laptop Pro',
-        price: 1299.99,
-        quantity: 1,
-        subtotal: 1299.99
-      },
-      {
-        cart_item_id: 'cart_' + Date.now() + '_2',
-        product_id: 2,
-        product_name: 'Wireless Mouse',
-        price: 29.99,
-        quantity: 2,
-        subtotal: 59.98
+    const productDetails = {
+      ...result,
+      in_stock: result.stock > 0,
+      stock_status: result.stock > 50 ? "in_stock" : result.stock > 0 ? "low_stock" : "out_of_stock",
+      discounted_price: result.price * 0.9,
+      // 10% discount simulation
+      related_products: [],
+      // Could be populated with a related products query
+      last_updated: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    return new Response(JSON.stringify({
+      success: true,
+      product: productDetails
+    }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  } catch (error) {
+    console.error("Error in handleGetSingleProduct:", error);
+    return new Response(JSON.stringify({
+      error: error.message,
+      debug: {
+        stack: error.stack,
+        dbAvailable: !!env.DB
       }
-    ];
-  
-    const total = mockCartItems.reduce((sum, item) => sum + item.subtotal, 0);
-  
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+}
+__name(handleGetSingleProduct, "handleGetSingleProduct");
+async function handleGetProfile(request, env, corsHeaders) {
+  try {
+    const body = await request.json();
+    const { session_token, user_id, correlation_id, session_id, csrf_token } = body;
+    if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token) {
+      return new Response(JSON.stringify({
+        error: "Missing required fields",
+        required: ["session_token", "user_id", "correlation_id", "session_id", "csrf_token"],
+        message: "All session data must be provided in request body for correlation testing"
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const user = await env.DB.prepare(
+      "SELECT id, username, email FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?"
+    ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
+    if (!user) {
+      return new Response(JSON.stringify({
+        error: "Invalid session data",
+        message: "One or more session tokens are invalid or mismatched (session_token, user_id, session_id, csrf_token, or correlation_id)"
+      }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
     return new Response(JSON.stringify({
       success: true,
       user_id: user.id,
       username: user.username,
-      cart_items: mockCartItems,
-      item_count: mockCartItems.length,
-      cart_total: total,
-      checkout_token: generateToken() // For checkout correlation
+      email: user.email,
+      session_info: {
+        token_verified: true,
+        correlation_id_received: correlation_id,
+        created_at: (/* @__PURE__ */ new Date()).toISOString(),
+        expires_at: new Date(Date.now() + 36e5).toISOString()
+      },
+      profile_data: {
+        last_login: (/* @__PURE__ */ new Date()).toISOString(),
+        account_type: user.username.includes("admin") ? "admin" : "standard",
+        preferences: {
+          theme: "default",
+          notifications: true,
+          next_correlation_key: generateToken()
+          // Key for next request
+        }
+      },
+      server_metadata: {
+        request_id: generateToken(),
+        server_time: (/* @__PURE__ */ new Date()).toISOString(),
+        api_version: "v1.2.3"
+      }
     }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({
+      error: "Invalid request format",
+      message: "Request body must contain session_token, user_id, and correlation_id"
+    }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
   }
-  
-  async function handleProcessCheckout(request, env, corsHeaders) {
-    try {
-      const body = await request.json();
-      const {
-        session_token,
-        user_id,
-        correlation_id,
-        session_id,
-        csrf_token,
-        checkout_token,
-        cart_items,
-        payment_method = "credit_card",
-        billing_address,
-        shipping_address
-      } = body;
-
-      // Require all correlation data in request body
-      if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token || !checkout_token) {
-        return new Response(JSON.stringify({
-          error: 'Missing required checkout fields in request body',
-          required: ['session_token', 'user_id', 'correlation_id', 'session_id', 'csrf_token', 'checkout_token'],
-          message: 'All session and checkout data must be provided in request body'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Validate ALL session tokens
-      const user = await env.DB.prepare(
-        'SELECT id, username FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?'
-      ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
-
-      if (!user) {
-        return new Response(JSON.stringify({
-          error: 'Invalid session data in checkout request body',
-          message: 'One or more session tokens are invalid or mismatched'
-        }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-  
-      // Process checkout (mock)
-      const total = (cart_items?.length || 2) * 75.00;
-      const orderToken = generateToken();
-      const confirmationNumber = "CNF" + Date.now().toString().slice(-8);
-      const transactionId = generateToken();
-  
-      // Create order
-      const result = await env.DB.prepare(
-        'INSERT INTO orders (user_id, order_token, total, status) VALUES (?, ?, ?, ?)'
-      ).bind(user.id, orderToken, total, 'confirmed').run();
-  
+}
+__name(handleGetProfile, "handleGetProfile");
+async function handleAddToCart(request, env, corsHeaders) {
+  try {
+    const body = await request.json();
+    const { product_id, quantity = 1, session_token, user_id, correlation_id, session_id, csrf_token, client_session_id } = body;
+    if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token) {
       return new Response(JSON.stringify({
-        success: true,
-        message: 'Checkout completed successfully',
-        order_id: result.meta.last_row_id,
-        order_token: orderToken,
-        confirmation_number: confirmationNumber,
-        total: total,
-        status: 'confirmed',
-        payment_confirmation: {
-          transaction_id: transactionId,
-          payment_method: payment_method,
-          authorization_code: "AUTH" + Math.random().toString().slice(-6),
-          processed_at: new Date().toISOString()
-        },
-        shipping_info: {
-          tracking_number: `TRK${result.meta.last_row_id.toString().padStart(8, '0')}`,
-          estimated_delivery: new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0]
-        },
-        correlation_validation: {
-          session_token_used: session_token.substring(0, 12) + "...",
-          user_id_confirmed: user_id,
-          correlation_id_received: correlation_id,
-          checkout_token_validated: checkout_token
-        },
-        next_steps: {
-          order_tracking_url: `/api/orders/${orderToken}`,
-          receipt_download_token: generateToken(),
-          customer_service_ref: "CS" + Date.now().toString().slice(-6)
+        error: "Missing required session fields in request body",
+        required: ["session_token", "user_id", "correlation_id", "session_id", "csrf_token"],
+        message: "All session data must be provided in request body for correlation testing",
+        example: {
+          "product_id": 1,
+          "quantity": 1,
+          "session_token": "tok_...",
+          "user_id": 1,
+          "correlation_id": "tok_...",
+          "session_id": "sess_...",
+          "csrf_token": "tok_..."
         }
-      }), {
-        headers: { 
-          ...corsHeaders, 
-          'Content-Type': 'application/json',
-          'X-Transaction-ID': transactionId,
-          'X-Order-Confirmation': confirmationNumber
-        }
-      });
-    } catch (error) {
-      console.error('Error in handleProcessCheckout:', error);
-      return new Response(JSON.stringify({ 
-        error: 'Invalid checkout request format',
-        message: 'Request body must contain all required session and checkout data'
       }), {
         status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
       });
     }
-  }
-  
-  async function handleCreateOrder(request, env, corsHeaders) {
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return new Response(JSON.stringify({ error: 'Authorization token required' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    if (!product_id) {
+      return new Response(JSON.stringify({ error: "Product ID is required" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
       });
     }
-  
-    const token = authHeader.substring(7);
-    const body = await request.json();
-    const { product_ids, quantities, client_request_id, checkout_token, payment_method = "credit_card" } = body;
-  
-    // Validate session token and get user
+    if (!env.DB) {
+      return new Response(JSON.stringify({
+        error: "Database not available",
+        debug: "env.DB is undefined - check wrangler.toml binding"
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
     const user = await env.DB.prepare(
-      'SELECT id FROM users WHERE session_token = ?'
-    ).bind(token).first();
-  
+      "SELECT id, username FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?"
+    ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
     if (!user) {
-      return new Response(JSON.stringify({ error: 'Invalid or expired token' }), {
+      return new Response(JSON.stringify({
+        error: "Invalid session data in request body",
+        message: "One or more session tokens are invalid or mismatched (session_token, user_id, session_id, csrf_token, or correlation_id)"
+      }), {
         status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
       });
     }
-  
-    // Calculate total (simplified)
-    const total = (product_ids?.length || 1) * 50.00; // Mock calculation
-    const orderToken = generateToken();
-    const confirmationNumber = "CNF" + Date.now().toString().slice(-8);
-  
-    // Create order
-    const result = await env.DB.prepare(
-      'INSERT INTO orders (user_id, order_token, total, status) VALUES (?, ?, ?, ?)'
-    ).bind(user.id, orderToken, total, 'pending').run();
-  
+    if (!product_id) {
+      return new Response(JSON.stringify({ error: "Product ID is required" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    if (!env.DB) {
+      return new Response(JSON.stringify({
+        error: "Database not available",
+        debug: "env.DB is undefined - check wrangler.toml binding"
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const product = await env.DB.prepare(
+      "SELECT * FROM products WHERE id = ?"
+    ).bind(product_id).first();
+    if (!product) {
+      return new Response(JSON.stringify({ error: "Product not found" }), {
+        status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    if (product.stock < quantity) {
+      return new Response(JSON.stringify({
+        error: "Insufficient stock",
+        available_stock: product.stock,
+        requested_quantity: quantity
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const cartItemId = generateToken();
+    const subtotal = product.price * quantity;
+    const requestId = generateToken();
+    const cartItem = {
+      cart_item_id: cartItemId,
+      product_id: product.id,
+      product_name: product.name,
+      price: product.price,
+      quantity,
+      subtotal,
+      added_at: (/* @__PURE__ */ new Date()).toISOString(),
+      user_id: user.id,
+      username: user.username,
+      session_reference: session_token.substring(0, 16) + "...",
+      // Partial session token in payload
+      correlation_tracking: {
+        request_id: requestId,
+        client_correlation_id: correlation_id,
+        client_session_id: client_session_id || null,
+        server_correlation_id: generateToken()
+      }
+    };
     return new Response(JSON.stringify({
       success: true,
+      message: "Product added to cart successfully",
+      cart_item: cartItem,
+      total_items_in_cart: Math.floor(Math.random() * 5) + 1,
+      // Mock cart count
+      cart_total: subtotal + Math.random() * 100,
+      // Mock cart total
+      next_step_token: generateToken(),
+      // Token for next step correlation
+      server_context: {
+        processing_time: Math.floor(Math.random() * 100) + 50 + "ms",
+        server_id: "srv-" + Math.random().toString(36).substr(2, 6),
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      }
+    }), {
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+        "X-Request-ID": requestId,
+        // Custom header for correlation
+        "X-Session-Hint": session_token.substring(0, 12)
+        // Partial session in header too
+      }
+    });
+  } catch (error) {
+    console.error("Error in handleAddToCart:", error);
+    return new Response(JSON.stringify({
+      error: error.message,
+      debug: {
+        stack: error.stack,
+        dbAvailable: !!env.DB
+      }
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+}
+__name(handleAddToCart, "handleAddToCart");
+async function handleGetCart(request, env, corsHeaders) {
+  const authHeader = request.headers.get("Authorization");
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return new Response(JSON.stringify({
+      error: "Authentication required",
+      message: "Please login to view cart"
+    }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+  const token = authHeader.substring(7);
+  const user = await env.DB.prepare(
+    "SELECT id, username FROM users WHERE session_token = ?"
+  ).bind(token).first();
+  if (!user) {
+    return new Response(JSON.stringify({
+      error: "Invalid or expired session token",
+      message: "Please login again"
+    }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+  const mockCartItems = [
+    {
+      cart_item_id: "cart_" + Date.now() + "_1",
+      product_id: 1,
+      product_name: "Laptop Pro",
+      price: 1299.99,
+      quantity: 1,
+      subtotal: 1299.99
+    },
+    {
+      cart_item_id: "cart_" + Date.now() + "_2",
+      product_id: 2,
+      product_name: "Wireless Mouse",
+      price: 29.99,
+      quantity: 2,
+      subtotal: 59.98
+    }
+  ];
+  const total = mockCartItems.reduce((sum, item) => sum + item.subtotal, 0);
+  return new Response(JSON.stringify({
+    success: true,
+    user_id: user.id,
+    username: user.username,
+    cart_items: mockCartItems,
+    item_count: mockCartItems.length,
+    cart_total: total,
+    checkout_token: generateToken()
+    // For checkout correlation
+  }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" }
+  });
+}
+__name(handleGetCart, "handleGetCart");
+async function handleProcessCheckout(request, env, corsHeaders) {
+  try {
+    const body = await request.json();
+    const {
+      session_token,
+      user_id,
+      correlation_id,
+      session_id,
+      csrf_token,
+      checkout_token,
+      cart_items,
+      payment_method = "credit_card",
+      billing_address,
+      shipping_address
+    } = body;
+    if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token || !checkout_token) {
+      return new Response(JSON.stringify({
+        error: "Missing required checkout fields in request body",
+        required: ["session_token", "user_id", "correlation_id", "session_id", "csrf_token", "checkout_token"],
+        message: "All session and checkout data must be provided in request body"
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const user = await env.DB.prepare(
+      "SELECT id, username FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?"
+    ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
+    if (!user) {
+      return new Response(JSON.stringify({
+        error: "Invalid session data in checkout request body",
+        message: "One or more session tokens are invalid or mismatched"
+      }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const total = (cart_items?.length || 2) * 75;
+    const orderToken = generateToken();
+    const confirmationNumber = "CNF" + Date.now().toString().slice(-8);
+    const transactionId = generateToken();
+    const result = await env.DB.prepare(
+      "INSERT INTO orders (user_id, order_token, total, status) VALUES (?, ?, ?, ?)"
+    ).bind(user.id, orderToken, total, "confirmed").run();
+    return new Response(JSON.stringify({
+      success: true,
+      message: "Checkout completed successfully",
       order_id: result.meta.last_row_id,
       order_token: orderToken,
       confirmation_number: confirmationNumber,
-      total: total,
-      status: 'pending',
-      estimated_delivery: '3-5 business days',
-      payment_info: {
-        method: payment_method,
-        transaction_id: generateToken(),
-        authorization_code: "AUTH" + Math.random().toString().slice(-6)
+      total,
+      status: "confirmed",
+      payment_confirmation: {
+        transaction_id: transactionId,
+        payment_method,
+        authorization_code: "AUTH" + Math.random().toString().slice(-6),
+        processed_at: (/* @__PURE__ */ new Date()).toISOString()
       },
       shipping_info: {
-        tracking_number: `TRK${result.meta.last_row_id.toString().padStart(8, '0')}`,
-        estimated_ship_date: new Date(Date.now() + 86400000).toISOString().split('T')[0] // Tomorrow
+        tracking_number: `TRK${result.meta.last_row_id.toString().padStart(8, "0")}`,
+        estimated_delivery: new Date(Date.now() + 3 * 864e5).toISOString().split("T")[0]
       },
-      correlation_data: {
-        client_request_id: client_request_id || null,
-        checkout_token: checkout_token || null,
-        server_order_ref: generateToken(),
-        processing_node: "order-proc-" + Math.random().toString(36).substr(2, 4)
+      correlation_validation: {
+        session_token_used: session_token.substring(0, 12) + "...",
+        user_id_confirmed: user_id,
+        correlation_id_received: correlation_id,
+        checkout_token_validated: checkout_token
       },
-      next_actions: {
-        track_order_url: `/api/orders/${orderToken}`,
-        invoice_download_token: generateToken(),
+      next_steps: {
+        order_tracking_url: `/api/orders/${orderToken}`,
+        receipt_download_token: generateToken(),
         customer_service_ref: "CS" + Date.now().toString().slice(-6)
       }
     }), {
-      headers: { 
-        ...corsHeaders, 
-        'Content-Type': 'application/json',
-        'X-Order-ID': orderToken,
-        'X-Confirmation': confirmationNumber
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+        "X-Transaction-ID": transactionId,
+        "X-Order-Confirmation": confirmationNumber
       }
     });
+  } catch (error) {
+    console.error("Error in handleProcessCheckout:", error);
+    return new Response(JSON.stringify({
+      error: "Invalid checkout request format",
+      message: "Request body must contain all required session and checkout data"
+    }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
   }
-  
-  async function handleGetOrder(request, env, corsHeaders) {
-    const url = new URL(request.url);
-    const orderToken = url.pathname.split('/').pop();
-  
-    const order = await env.DB.prepare(
-      'SELECT o.*, u.username FROM orders o JOIN users u ON o.user_id = u.id WHERE o.order_token = ?'
-    ).bind(orderToken).first();
-  
-    if (!order) {
-      return new Response(JSON.stringify({ error: 'Order not found' }), {
-        status: 404,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+}
+__name(handleProcessCheckout, "handleProcessCheckout");
+async function handleCreateOrder(request, env, corsHeaders) {
+  const authHeader = request.headers.get("Authorization");
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return new Response(JSON.stringify({ error: "Authorization token required" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+  const token = authHeader.substring(7);
+  const body = await request.json();
+  const { product_ids, quantities, client_request_id, checkout_token, payment_method = "credit_card" } = body;
+  const user = await env.DB.prepare(
+    "SELECT id FROM users WHERE session_token = ?"
+  ).bind(token).first();
+  if (!user) {
+    return new Response(JSON.stringify({ error: "Invalid or expired token" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+  const total = (product_ids?.length || 1) * 50;
+  const orderToken = generateToken();
+  const confirmationNumber = "CNF" + Date.now().toString().slice(-8);
+  const result = await env.DB.prepare(
+    "INSERT INTO orders (user_id, order_token, total, status) VALUES (?, ?, ?, ?)"
+  ).bind(user.id, orderToken, total, "pending").run();
+  return new Response(JSON.stringify({
+    success: true,
+    order_id: result.meta.last_row_id,
+    order_token: orderToken,
+    confirmation_number: confirmationNumber,
+    total,
+    status: "pending",
+    estimated_delivery: "3-5 business days",
+    payment_info: {
+      method: payment_method,
+      transaction_id: generateToken(),
+      authorization_code: "AUTH" + Math.random().toString().slice(-6)
+    },
+    shipping_info: {
+      tracking_number: `TRK${result.meta.last_row_id.toString().padStart(8, "0")}`,
+      estimated_ship_date: new Date(Date.now() + 864e5).toISOString().split("T")[0]
+      // Tomorrow
+    },
+    correlation_data: {
+      client_request_id: client_request_id || null,
+      checkout_token: checkout_token || null,
+      server_order_ref: generateToken(),
+      processing_node: "order-proc-" + Math.random().toString(36).substr(2, 4)
+    },
+    next_actions: {
+      track_order_url: `/api/orders/${orderToken}`,
+      invoice_download_token: generateToken(),
+      customer_service_ref: "CS" + Date.now().toString().slice(-6)
+    }
+  }), {
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+      "X-Order-ID": orderToken,
+      "X-Confirmation": confirmationNumber
+    }
+  });
+}
+__name(handleCreateOrder, "handleCreateOrder");
+async function handleGetOrder(request, env, corsHeaders) {
+  const url = new URL(request.url);
+  const orderToken = url.pathname.split("/").pop();
+  const order = await env.DB.prepare(
+    "SELECT o.*, u.username FROM orders o JOIN users u ON o.user_id = u.id WHERE o.order_token = ?"
+  ).bind(orderToken).first();
+  if (!order) {
+    return new Response(JSON.stringify({ error: "Order not found" }), {
+      status: 404,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+  return new Response(JSON.stringify({
+    order_id: order.id,
+    order_token: order.order_token,
+    username: order.username,
+    total: order.total,
+    status: order.status,
+    created_at: order.created_at,
+    tracking_number: `TRK${order.id.toString().padStart(8, "0")}`
+  }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" }
+  });
+}
+__name(handleGetOrder, "handleGetOrder");
+async function handleHttpTest(request, env, corsHeaders) {
+  try {
+    const body = await request.json();
+    const { session_token, user_id, correlation_id, session_id, csrf_token, test_message } = body;
+    if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token) {
+      return new Response('HTTP 400 - Missing required session fields in request body\n\nRequired: session_token, user_id, correlation_id, session_id, csrf_token\n\nExample:\n{\n  "session_token": "tok_...",\n  "user_id": 1,\n  "correlation_id": "tok_...",\n  "session_id": "sess_...",\n  "csrf_token": "tok_...",\n  "test_message": "Hello from LoadMagic!"\n}', {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "text/plain" }
       });
     }
-  
-    return new Response(JSON.stringify({
-      order_id: order.id,
-      order_token: order.order_token,
-      username: order.username,
-      total: order.total,
-      status: order.status,
-      created_at: order.created_at,
-      tracking_number: `TRK${order.id.toString().padStart(8, '0')}`
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    });
-  }
-  
-  async function handleHttpTest(request, env, corsHeaders) {
-    try {
-      const body = await request.json();
-      const { session_token, user_id, correlation_id, session_id, csrf_token, test_message } = body;
-
-      // Require ALL session data in request body for correlation testing
-      if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token) {
-        return new Response('HTTP 400 - Missing required session fields in request body\n\nRequired: session_token, user_id, correlation_id, session_id, csrf_token\n\nExample:\n{\n  "session_token": "tok_...",\n  "user_id": 1,\n  "correlation_id": "tok_...",\n  "session_id": "sess_...",\n  "csrf_token": "tok_...",\n  "test_message": "Hello from LoadMagic!"\n}', {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
-        });
-      }
-
-      // Check if database is available
-      if (!env.DB) {
-        return new Response('HTTP 500 - Database not available\n\nenv.DB is undefined - check wrangler.toml binding', {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
-        });
-      }
-
-      // Validate ALL session tokens from request body
-      const user = await env.DB.prepare(
-        'SELECT id, username FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?'
-      ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
-
-      if (!user) {
-        return new Response('HTTP 401 - Invalid session data in request body\n\nOne or more session tokens are invalid or mismatched (session_token, user_id, session_id, csrf_token, or correlation_id)', {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
-        });
-      }
-
-      // Generate test response data
-      const testId = generateToken();
-      const step2Token = generateToken();
-      const timestamp = new Date().toISOString();
-      const serverId = "srv-" + Math.random().toString(36).substr(2, 6);
-
-      // Store the step2Token in the database for validation in Step 2
-      await env.DB.prepare(
-        'UPDATE users SET http_test_step2_token = ?, http_test_step2_token_timestamp = ? WHERE id = ?'
-      ).bind(step2Token, timestamp, user.id).run();
-
-      // Return simple HTTP response (not JSON) - perfect for testing
-      const responseText = `HTTP 200 - HTTP Test Step 1 Successful!
+    if (!env.DB) {
+      return new Response("HTTP 500 - Database not available\n\nenv.DB is undefined - check wrangler.toml binding", {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "text/plain" }
+      });
+    }
+    const user = await env.DB.prepare(
+      "SELECT id, username FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?"
+    ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
+    if (!user) {
+      return new Response("HTTP 401 - Invalid session data in request body\n\nOne or more session tokens are invalid or mismatched (session_token, user_id, session_id, csrf_token, or correlation_id)", {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "text/plain" }
+      });
+    }
+    const testId = generateToken();
+    const step2Token = generateToken();
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    const serverId = "srv-" + Math.random().toString(36).substr(2, 6);
+    await env.DB.prepare(
+      "UPDATE users SET http_test_step2_token = ?, http_test_step2_token_timestamp = ? WHERE id = ?"
+    ).bind(step2Token, timestamp, user.id).run();
+    const responseText = `HTTP 200 - HTTP Test Step 1 Successful!
 
 [AUTH] Authentication Method: Request Body Session Data
 [INFO] Session Token: ${session_token.substring(0, 20)}...
@@ -919,135 +801,135 @@ export default {
 [SYNC] Correlation ID: ${correlation_id.substring(0, 20)}...
 [USER] Username: ${user.username}
 
-🧪 Step 1 Test Details:
-• Test ID: ${testId}
-• Server ID: ${serverId}
-• Timestamp: ${timestamp}
-• Test Message: ${test_message || 'No message provided'}
+\u{1F9EA} Step 1 Test Details:
+\u2022 Test ID: ${testId}
+\u2022 Server ID: ${serverId}
+\u2022 Timestamp: ${timestamp}
+\u2022 Test Message: ${test_message || "No message provided"}
 
 [OK] Session Validation: PASSED
 [OK] Database Connection: ACTIVE
 [OK] User Authentication: CONFIRMED
 
 [TARGET] STEP 2 REQUIRED - Capture the Step 2 Token below!
-🔑 STEP 2 TOKEN: ${step2Token}
+\u{1F511} STEP 2 TOKEN: ${step2Token}
 
-📝 Response Format: Plain HTTP (not JSON)
-🔗 Perfect for testing HTTP response parsing
+\u{1F4DD} Response Format: Plain HTTP (not JSON)
+\u{1F517} Perfect for testing HTTP response parsing
 
-⚠️  IMPORTANT FOR CORRELATION:
-• Extract the "STEP 2 TOKEN" from this response
-• Use it in the next request to /api/http-test-step2
-• Step 2 will FAIL without this token!
+\u26A0\uFE0F  IMPORTANT FOR CORRELATION:
+\u2022 Extract the "STEP 2 TOKEN" from this response
+\u2022 Use it in the next request to /api/http-test-step2
+\u2022 Step 2 will FAIL without this token!
 
 Next Steps:
-• Extract STEP 2 TOKEN: ${step2Token}
-• Send it to /api/http-test-step2 endpoint
-• Test multi-step correlation`;
+\u2022 Extract STEP 2 TOKEN: ${step2Token}
+\u2022 Send it to /api/http-test-step2 endpoint
+\u2022 Test multi-step correlation`;
+    return new Response(responseText, {
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "text/plain",
+        "X-Test-ID": testId,
+        "X-Step2-Token": step2Token,
+        "X-Session-Hint": session_token.substring(0, 12),
+        "X-User-ID": user_id.toString(),
+        "X-Correlation-ID": correlation_id.substring(0, 12),
+        "X-Server-ID": serverId,
+        "X-Timestamp": timestamp
+      }
+    });
+  } catch (error) {
+    console.error("Error in handleHttpTest:", error);
+    return new Response(`HTTP 500 - Internal Server Error
 
-      return new Response(responseText, {
-        status: 200,
-        headers: { 
-          ...corsHeaders, 
-          'Content-Type': 'text/plain',
-          'X-Test-ID': testId,
-          'X-Step2-Token': step2Token,
-          'X-Session-Hint': session_token.substring(0, 12),
-          'X-User-ID': user_id.toString(),
-          'X-Correlation-ID': correlation_id.substring(0, 12),
-          'X-Server-ID': serverId,
-          'X-Timestamp': timestamp
-        }
-      });
-    } catch (error) {
-      console.error('Error in handleHttpTest:', error);
-      return new Response(`HTTP 500 - Internal Server Error\n\nError: ${error.message}\n\nThis endpoint requires session data in request body for correlation testing.`, {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
+Error: ${error.message}
+
+This endpoint requires session data in request body for correlation testing.`, {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "text/plain" }
+    });
+  }
+}
+__name(handleHttpTest, "handleHttpTest");
+async function handleHttpTestStep2(request, env, corsHeaders) {
+  try {
+    const body = await request.json();
+    const { session_token, user_id, correlation_id, session_id, csrf_token, step2_token, test_message } = body;
+    if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token || !step2_token) {
+      return new Response('HTTP 400 - Missing required fields for Step 2\n\nRequired: session_token, user_id, correlation_id, session_id, csrf_token, step2_token\n\n\u26A0\uFE0F  step2_token MUST be extracted from Step 1 response!\n\nExample:\n{\n  "session_token": "tok_...",\n  "user_id": 1,\n  "correlation_id": "tok_...",\n  "session_id": "sess_...",\n  "csrf_token": "tok_...",\n  "step2_token": "tok_...",\n  "test_message": "Step 2 from LoadMagic!"\n}', {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "text/plain" }
       });
     }
-  }
+    if (!env.DB) {
+      return new Response("HTTP 500 - Database not available\n\nenv.DB is undefined - check wrangler.toml binding", {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "text/plain" }
+      });
+    }
+    const user = await env.DB.prepare(
+      "SELECT id, username, http_test_step2_token FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?"
+    ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
+    if (!user) {
+      return new Response("HTTP 401 - Invalid session data in request body\n\nOne or more session tokens are invalid or mismatched (session_token, user_id, session_id, csrf_token, or correlation_id)", {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "text/plain" }
+      });
+    }
+    if (!user.http_test_step2_token) {
+      return new Response("HTTP 400 - Correlation FAILED: No step2_token found\n\n\u26A0\uFE0F  You must call /api/http-test (Step 1) first to generate a step2_token!\n\n[ERROR] Correlation Test: FAILED\n[ERROR] Reason: Missing Step 1 execution\n\nPlease run Step 1 first to generate the required step2_token.", {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "text/plain" }
+      });
+    }
+    if (user.http_test_step2_token !== step2_token) {
+      return new Response(`HTTP 400 - Correlation FAILED: step2_token mismatch
 
-  async function handleHttpTestStep2(request, env, corsHeaders) {
-    try {
-      const body = await request.json();
-      const { session_token, user_id, correlation_id, session_id, csrf_token, step2_token, test_message } = body;
+\u26A0\uFE0F  The step2_token you provided does not match the one generated in Step 1!
 
-      // Require ALL session data AND step2_token from step 1
-      if (!session_token || !user_id || !correlation_id || !session_id || !csrf_token || !step2_token) {
-        return new Response('HTTP 400 - Missing required fields for Step 2\n\nRequired: session_token, user_id, correlation_id, session_id, csrf_token, step2_token\n\n⚠️  step2_token MUST be extracted from Step 1 response!\n\nExample:\n{\n  "session_token": "tok_...",\n  "user_id": 1,\n  "correlation_id": "tok_...",\n  "session_id": "sess_...",\n  "csrf_token": "tok_...",\n  "step2_token": "tok_...",\n  "test_message": "Step 2 from LoadMagic!"\n}', {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
-        });
-      }
+[ERROR] Correlation Test: FAILED
+[ERROR] Expected: ${user.http_test_step2_token.substring(0, 20)}...
+[ERROR] Received: ${step2_token.substring(0, 20)}...
 
-      // Check if database is available
-      if (!env.DB) {
-        return new Response('HTTP 500 - Database not available\n\nenv.DB is undefined - check wrangler.toml binding', {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
-        });
-      }
+This means your correlation extractor is not working correctly.
 
-      // Validate ALL session tokens from request body and retrieve stored step2_token
-      const user = await env.DB.prepare(
-        'SELECT id, username, http_test_step2_token FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?'
-      ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
-
-      if (!user) {
-        return new Response('HTTP 401 - Invalid session data in request body\n\nOne or more session tokens are invalid or mismatched (session_token, user_id, session_id, csrf_token, or correlation_id)', {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
-        });
-      }
-
-      // CRITICAL: Validate that the step2_token matches the one stored in Step 1
-      if (!user.http_test_step2_token) {
-        return new Response('HTTP 400 - Correlation FAILED: No step2_token found\n\n⚠️  You must call /api/http-test (Step 1) first to generate a step2_token!\n\n[ERROR] Correlation Test: FAILED\n[ERROR] Reason: Missing Step 1 execution\n\nPlease run Step 1 first to generate the required step2_token.', {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
-        });
-      }
-
-      if (user.http_test_step2_token !== step2_token) {
-        return new Response(`HTTP 400 - Correlation FAILED: step2_token mismatch\n\n⚠️  The step2_token you provided does not match the one generated in Step 1!\n\n[ERROR] Correlation Test: FAILED\n[ERROR] Expected: ${user.http_test_step2_token.substring(0, 20)}...\n[ERROR] Received: ${step2_token.substring(0, 20)}...\n\nThis means your correlation extractor is not working correctly.\n\nPlease check:\n1. Did you extract the step2_token from Step 1 response?\n2. Is your Regular Expression Extractor configured correctly?\n3. Are you using the correct variable name in Step 2 request?`, {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            'Content-Type': 'text/plain',
-            'X-Correlation-Status': 'FAILED',
-            'X-Expected-Token': user.http_test_step2_token.substring(0, 20),
-            'X-Received-Token': step2_token.substring(0, 20)
-          }
-        });
-      }
-
-      // Clear the stored step2_token after successful validation (prevents reuse)
-      await env.DB.prepare(
-        'UPDATE users SET http_test_step2_token = NULL, http_test_step2_token_timestamp = NULL WHERE id = ?'
-      ).bind(user.id).run();
-
-      // Generate step 2 response data
-      const step2Id = generateToken();
-      const finalToken = generateToken();
-      const timestamp = new Date().toISOString();
-      const serverId = "srv-" + Math.random().toString(36).substr(2, 6);
-
-      // Return step 2 HTTP response
-      const responseText = `HTTP 200 - HTTP Test Step 2 Successful!
+Please check:
+1. Did you extract the step2_token from Step 1 response?
+2. Is your Regular Expression Extractor configured correctly?
+3. Are you using the correct variable name in Step 2 request?`, {
+        status: 400,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "text/plain",
+          "X-Correlation-Status": "FAILED",
+          "X-Expected-Token": user.http_test_step2_token.substring(0, 20),
+          "X-Received-Token": step2_token.substring(0, 20)
+        }
+      });
+    }
+    await env.DB.prepare(
+      "UPDATE users SET http_test_step2_token = NULL, http_test_step2_token_timestamp = NULL WHERE id = ?"
+    ).bind(user.id).run();
+    const step2Id = generateToken();
+    const finalToken = generateToken();
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    const serverId = "srv-" + Math.random().toString(36).substr(2, 6);
+    const responseText = `HTTP 200 - HTTP Test Step 2 Successful!
 
 [AUTH] Authentication Method: Request Body Session Data + Step 2 Token
 [INFO] Session Token: ${session_token.substring(0, 20)}...
 [ID] User ID: ${user_id}
 [SYNC] Correlation ID: ${correlation_id.substring(0, 20)}...
-🔑 Step 2 Token: ${step2_token.substring(0, 20)}...
+\u{1F511} Step 2 Token: ${step2_token.substring(0, 20)}...
 [USER] Username: ${user.username}
 
-🧪 Step 2 Test Details:
-• Step 2 ID: ${step2Id}
-• Server ID: ${serverId}
-• Timestamp: ${timestamp}
-• Test Message: ${test_message || 'No message provided'}
+\u{1F9EA} Step 2 Test Details:
+\u2022 Step 2 ID: ${step2Id}
+\u2022 Server ID: ${serverId}
+\u2022 Timestamp: ${timestamp}
+\u2022 Test Message: ${test_message || "No message provided"}
 
 [OK] Session Validation: PASSED
 [OK] Step 2 Token Validation: PASSED
@@ -1055,898 +937,819 @@ Next Steps:
 [OK] User Authentication: CONFIRMED
 [OK] Multi-Step Correlation: SUCCESSFUL
 
-🎉 MULTI-STEP CORRELATION COMPLETE!
-🏆 FINAL SUCCESS TOKEN: ${finalToken}
+\u{1F389} MULTI-STEP CORRELATION COMPLETE!
+\u{1F3C6} FINAL SUCCESS TOKEN: ${finalToken}
 
-📝 Response Format: Plain HTTP (not JSON)
-🔗 Perfect for testing multi-step correlation
+\u{1F4DD} Response Format: Plain HTTP (not JSON)
+\u{1F517} Perfect for testing multi-step correlation
 
 [OK] Correlation Test Results:
-• Step 1: Session authentication ✓
-• Step 2: Token extraction ✓
-• Step 2: Token validation ✓
-• Multi-step flow: COMPLETE ✓
+\u2022 Step 1: Session authentication \u2713
+\u2022 Step 2: Token extraction \u2713
+\u2022 Step 2: Token validation \u2713
+\u2022 Multi-step flow: COMPLETE \u2713
 
 [TARGET] This demonstrates successful multi-step correlation testing!
-📊 Both steps required session data in request body
-🔗 Step 2 required token extracted from Step 1 response
+\u{1F4CA} Both steps required session data in request body
+\u{1F517} Step 2 required token extracted from Step 1 response
 
 Congratulations! Your correlation is working perfectly!`;
+    return new Response(responseText, {
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "text/plain",
+        "X-Step2-ID": step2Id,
+        "X-Final-Token": finalToken,
+        "X-Step2-Token-Received": step2_token.substring(0, 12),
+        "X-Session-Hint": session_token.substring(0, 12),
+        "X-User-ID": user_id.toString(),
+        "X-Correlation-ID": correlation_id.substring(0, 12),
+        "X-Server-ID": serverId,
+        "X-Timestamp": timestamp
+      }
+    });
+  } catch (error) {
+    console.error("Error in handleHttpTestStep2:", error);
+    return new Response(`HTTP 500 - Internal Server Error
 
-      return new Response(responseText, {
-        status: 200,
-        headers: { 
-          ...corsHeaders, 
-          'Content-Type': 'text/plain',
-          'X-Step2-ID': step2Id,
-          'X-Final-Token': finalToken,
-          'X-Step2-Token-Received': step2_token.substring(0, 12),
-          'X-Session-Hint': session_token.substring(0, 12),
-          'X-User-ID': user_id.toString(),
-          'X-Correlation-ID': correlation_id.substring(0, 12),
-          'X-Server-ID': serverId,
-          'X-Timestamp': timestamp
-        }
-      });
-    } catch (error) {
-      console.error('Error in handleHttpTestStep2:', error);
-      return new Response(`HTTP 500 - Internal Server Error\n\nError: ${error.message}\n\nThis endpoint requires session data AND step2_token in request body for multi-step correlation testing.`, {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'text/plain' }
-      });
-    }
+Error: ${error.message}
+
+This endpoint requires session data AND step2_token in request body for multi-step correlation testing.`, {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "text/plain" }
+    });
   }
-
-  // Dashboard1 API Handlers - Short value correlation testing
-  async function handleDashboard1Step1(request, env, corsHeaders) {
-    try {
-      const body = await request.json();
-      const { session_token, user_id } = body;
-
-      // Simple authentication - only require session_token and user_id
-      if (!session_token || !user_id) {
-        return new Response(JSON.stringify({
-          error: 'Missing required fields',
-          required: ['session_token', 'user_id'],
-          hint: 'This endpoint requires minimal session data for simplified testing'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Check if database is available
-      if (!env.DB) {
-        return new Response(JSON.stringify({
-          error: 'Database not available'
-        }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Validate session token and fetch all session fields for network response
-      const user = await env.DB.prepare(
-        'SELECT id, username, session_token, session_id, csrf_token, correlation_id FROM users WHERE session_token = ? AND id = ?'
-      ).bind(session_token, user_id).first();
-
-      if (!user) {
-        return new Response(JSON.stringify({
-          error: 'Invalid session',
-          hint: 'Session token or user_id is invalid'
-        }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Generate a SHORT shortID for correlation testing (1-2 digit numbers)
-      // This is the key difference - testing correlation with very short values
-      const shortID = (Math.floor(Math.random() * 9) + 1).toString(); // "1" through "9"
-      const timestamp = new Date().toISOString();
-
-      // Store the shortID in the database for validation in Step 2
-      await env.DB.prepare(
-        'UPDATE users SET dashboard1_shortid = ?, dashboard1_shortid_timestamp = ? WHERE id = ?'
-      ).bind(shortID, timestamp, user.id).run();
-
-      // Return JSON response with short shortID
-      return new Response(JSON.stringify({
-        success: true,
-        message: 'Step 1 completed - shortID generated',
-        shortID: shortID, // Short value like "1", "2", "3"
-        username: user.username,
-        user_id: user.id,
-        session_token: user.session_token,
-        session_id: user.session_id,
-        csrf_token: user.csrf_token,
-        correlation_id: user.correlation_id,
-        timestamp: timestamp,
-        hint: 'Use this shortID in Step 2 request'
-      }), {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-          'X-Session-Token': user.session_token || '',
-          'X-Correlation-Id': user.correlation_id || '',
-          'X-ShortID': shortID, // Also in header for multiple extraction options
-          'X-Timestamp': timestamp
-        }
-      });
-    } catch (error) {
-      console.error('Error in handleDashboard1Step1:', error);
-      return new Response(JSON.stringify({
-        error: 'Internal server error',
-        message: error.message
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
-  }
-
-  async function handleDashboard1Step2(request, env, corsHeaders) {
-    try {
-      const body = await request.json();
-      const { session_token, user_id, shortID } = body;
-
-      // Require session data AND shortID from step 1
-      if (!session_token || !user_id || !shortID) {
-        return new Response(JSON.stringify({
-          error: 'Missing required fields',
-          required: ['session_token', 'user_id', 'shortID'],
-          hint: 'shortID must be extracted from Step 1 response'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Check if database is available
-      if (!env.DB) {
-        return new Response(JSON.stringify({
-          error: 'Database not available'
-        }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Validate session token and get stored shortID + session fields
-      const user = await env.DB.prepare(
-        'SELECT id, username, dashboard1_shortid, session_id, csrf_token, correlation_id, session_token FROM users WHERE session_token = ? AND id = ?'
-      ).bind(session_token, user_id).first();
-
-      if (!user) {
-        return new Response(JSON.stringify({
-          error: 'Invalid session',
-          hint: 'Session token or user_id is invalid'
-        }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Validate shortID format (should be 1-2 digit number)
-      if (!/^[0-9]{1,2}$/.test(shortID)) {
-        return new Response(JSON.stringify({
-          error: 'Invalid shortID format',
-          received: shortID,
-          expected: 'Single digit number (1-9)',
-          hint: 'shortID must be extracted from Step 1 response'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // CRITICAL: Validate that the shortID matches the one stored in Step 1
-      if (!user.dashboard1_shortid) {
-        return new Response(JSON.stringify({
-          error: 'No shortID found',
-          hint: 'You must call Step 1 first to generate a shortID',
-          correlation_test: 'FAILED',
-          reason: 'Missing Step 1 execution'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      if (user.dashboard1_shortid !== shortID) {
-        return new Response(JSON.stringify({
-          error: 'shortID mismatch - Correlation FAILED',
-          expected: user.dashboard1_shortid,
-          received: shortID,
-          hint: 'The shortID you provided does not match the one generated in Step 1',
-          correlation_test: 'FAILED',
-          reason: 'Incorrect correlation value - correlation extraction failed or wrong value used'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const timestamp = new Date().toISOString();
-      const finalID = (Math.floor(Math.random() * 90) + 10).toString(); // "10" through "99"
-
-      // Clear the stored shortID after successful validation (prevents reuse)
-      await env.DB.prepare(
-        'UPDATE users SET dashboard1_shortid = NULL, dashboard1_shortid_timestamp = NULL WHERE id = ?'
-      ).bind(user.id).run();
-
-      // Return success response
-      return new Response(JSON.stringify({
-        success: true,
-        message: 'Step 2 completed - Correlation successful!',
-        username: user.username,
-        user_id: user.id,
-        shortID_received: shortID,
-        shortID_validated: true,
-        finalID: finalID, // Another short value for additional testing
-        timestamp: timestamp,
-        correlation_test: 'PASSED',
-        hint: 'Short value correlation is working correctly'
-      }), {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-          'X-ShortID-Received': shortID,
-          'X-FinalID': finalID,
-          'X-Timestamp': timestamp,
-          'X-Correlation-Status': 'PASSED'
-        }
-      });
-    } catch (error) {
-      console.error('Error in handleDashboard1Step2:', error);
-      return new Response(JSON.stringify({
-        error: 'Internal server error',
-        message: error.message
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
-  }
-
-  async function handleDashboard1Step3(request, env, corsHeaders) {
-    try {
-      const body = await request.json();
-      const { session_token, user_id, session_id } = body || {};
-
-      if (!session_token || !user_id || !session_id) {
-        return new Response(JSON.stringify({
-          error: 'Missing required fields',
-          required: ['session_token', 'session_id', 'user_id'],
-          hint: 'Send the full session body to generate the large viewstate'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      if (!env.DB) {
-        return new Response(JSON.stringify({
-          error: 'Database not available'
-        }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const user = await env.DB.prepare(
-        'SELECT id, username, session_token, session_id, csrf_token, correlation_id FROM users WHERE session_token = ? AND id = ? AND session_id = ?'
-      ).bind(session_token, user_id, session_id).first();
-
-      if (!user) {
-        return new Response(JSON.stringify({
-          error: 'Invalid session',
-          hint: 'Session token, session_id, or user_id is invalid'
-        }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const state = await buildLargeViewState(user.session_id, user.session_token, user.id);
-
-      const responsePayload = {
-        success: true,
-        message: 'Step 3 completed - large viewstate generated',
-        viewstate: state.viewstate,
-        viewstate_base64_length: state.viewstate.length,
-        viewstate_raw_length: state.rawLength,
-        signature: state.signature,
-        signature_hint: state.signature.substring(0, 12) + '...',
-        timestamp: state.timestamp,
-        constraints: {
-          minimum_view_length: 350000,
-          includes_nonce_and_signature: true,
-          structure: ['v', 'sid', 'uid', 'ts', 'nonce', 'sig', 'view']
-        }
-      };
-
-      return new Response(JSON.stringify(responsePayload), {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-          'X-Viewstate-Signature': state.signature,
-          'X-Viewstate-Size': state.rawLength.toString(),
-          'X-Viewstate-Base64-Size': state.viewstate.length.toString()
-        }
-      });
-    } catch (error) {
-      console.error('Error in handleDashboard1Step3:', error);
-      return new Response(JSON.stringify({
-        error: 'Internal server error',
-        message: error.message
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
-  }
-
-  async function handleDashboard1Step4(request, env, corsHeaders) {
-    try {
-      const body = await request.json();
-      const { session_token, user_id, session_id, viewstate } = body || {};
-
-      if (!session_token || !user_id || !session_id || !viewstate) {
-        return new Response(JSON.stringify({
-          error: 'Missing required fields',
-          required: ['session_token', 'session_id', 'user_id', 'viewstate'],
-          hint: 'Send the exact viewstate from Step 3 without trimming it'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      if (!env.DB) {
-        return new Response(JSON.stringify({
-          error: 'Database not available'
-        }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const user = await env.DB.prepare(
-        'SELECT id, username, session_token, session_id FROM users WHERE session_token = ? AND id = ? AND session_id = ?'
-      ).bind(session_token, user_id, session_id).first();
-
-      if (!user) {
-        return new Response(JSON.stringify({
-          error: 'Invalid session',
-          hint: 'Session token, session_id, or user_id is invalid'
-        }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      let decoded;
-      let parsed;
-
-      try {
-        decoded = atob(viewstate);
-        parsed = JSON.parse(decoded);
-      } catch (err) {
-        return new Response(JSON.stringify({
-          error: 'Invalid viewstate encoding',
-          details: err.message,
-          hint: 'Viewstate must be the base64 string returned in Step 3'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const issues = [];
-      const requiredKeys = ['v', 'sid', 'uid', 'ts', 'nonce', 'sig', 'view'];
-      const missingKeys = requiredKeys.filter(key => !(key in parsed));
-
-      if (missingKeys.length > 0) {
-        issues.push(`Missing fields: ${missingKeys.join(', ')}`);
-      }
-
-      if (parsed.sid !== session_id) {
-        issues.push('Session ID inside viewstate does not match request session_id');
-      }
-
-      if (String(parsed.uid) !== String(user.id)) {
-        issues.push('User ID inside viewstate does not match request user_id');
-      }
-
-      if (!parsed.view || parsed.view.length < 350000) {
-        issues.push('Viewstate payload is too small - expected a large ASP.NET style payload (>350KB raw)');
-      }
-
-      const recomputedSignature = await sha256Base64(`${session_token}|${session_id}|${user_id}|${parsed.nonce}|${parsed.ts}`);
-
-      if (parsed.sig !== recomputedSignature) {
-        issues.push('Signature mismatch - correlation failed');
-      }
-
-      if (issues.length > 0) {
-        return new Response(JSON.stringify({
-          error: 'Viewstate validation failed',
-          issues,
-          received_structure: Object.keys(parsed),
-          received_lengths: {
-            raw_view_length: parsed.view ? parsed.view.length : 0,
-            base64_length: viewstate.length
-          }
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const responsePayload = {
-        success: true,
-        message: 'Step 4 completed - large viewstate validated',
-        validated: true,
-        username: user.username,
-        user_id: user.id,
-        session_id: user.session_id,
-        signature_valid: true,
-        signature: parsed.sig,
-        view_lengths: {
-          raw_view_length: parsed.view.length,
-          base64_length: viewstate.length
-        },
-        timestamp: parsed.ts,
-        nonce: parsed.nonce
-      };
-
-      return new Response(JSON.stringify(responsePayload), {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-          'X-Viewstate-Validated': 'true',
-          'X-Viewstate-Signature': parsed.sig,
-          'X-Viewstate-Size': parsed.view.length.toString(),
-          'X-Viewstate-Nonce': parsed.nonce
-        }
-      });
-    } catch (error) {
-      console.error('Error in handleDashboard1Step4:', error);
-      return new Response(JSON.stringify({
-        error: 'Internal server error',
-        message: error.message
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
-  }
-
-  async function handleDashboard1Step5(request, env, corsHeaders) {
-    try {
-      const body = await request.json();
-      const { session_token, user_id, session_id, transactions, meta } = body || {};
-
-      if (!session_token || !user_id || !session_id || !transactions || !Array.isArray(transactions)) {
-        return new Response(JSON.stringify({
-          error: 'Missing required fields',
-          required: ['session_token', 'session_id', 'user_id', 'transactions'],
-          hint: 'transactions must be an array and should be large (200KB+)'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      if (!env.DB) {
-        return new Response(JSON.stringify({
-          error: 'Database not available'
-        }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const user = await env.DB.prepare(
-        'SELECT id, username, session_token, session_id FROM users WHERE session_token = ? AND id = ? AND session_id = ?'
-      ).bind(session_token, user_id, session_id).first();
-
-      if (!user) {
-        return new Response(JSON.stringify({
-          error: 'Invalid session',
-          hint: 'Session token, session_id, or user_id is invalid'
-        }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Basic structure validation for transactions array
-      const minCount = 600;
-      if (transactions.length < minCount) {
-        return new Response(JSON.stringify({
-          error: 'Payload too small',
-          hint: `Provide at least ${minCount} transaction objects to simulate bulk payloads`
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const transactionsString = JSON.stringify(transactions);
-      if (transactionsString.length < 500000) {
-        return new Response(JSON.stringify({
-          error: 'Payload size too small',
-          received_bytes: transactionsString.length,
-          hint: 'Aim for >500KB to exercise large-body handling'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const batchId = generateToken();
-      const pivotIndex = Math.min(Math.floor(transactions.length / 2), transactions.length - 1);
-      const pivotItem = transactions[pivotIndex] || {};
-      const pivotItemId = pivotItem.id ? String(pivotItem.id) : `pivot_${pivotIndex}`;
-      const validationCode = await sha256Base64(`${batchId}|${pivotItemId}|${session_token}|${session_id}|${user_id}|${transactions.length}`);
-
-      // Generate large response payload (~400KB) to test response correlation edge cases
-      const responseFiller = generateFillerString(400000);
-      const responseSignature = await sha256Base64(`${batchId}|${validationCode}|${responseFiller.substring(0, 100)}`);
-
-      const responsePayload = {
-        success: true,
-        message: 'Step 5 completed - bulk payload accepted',
-        batch_id: batchId,
-        pivot_item_id: pivotItemId,
-        validation_code: validationCode,
-        transactions_count: transactions.length,
-        payload_bytes: transactionsString.length,
-        constraints: {
-          minimum_count: minCount,
-          minimum_bytes: 500000
-        },
-        meta_echo: meta || null,
-        hint: 'Send batch_id, pivot_item_id, validation_code, and transactions_count to Step 6',
-        // Large response data for edge case testing (correlation tools must handle large responses)
-        response_data: {
-          filler: responseFiller,
-          filler_length: responseFiller.length,
-          response_signature: responseSignature,
-          response_signature_hint: responseSignature.substring(0, 12) + '...',
-          purpose: 'Large response payload to test LLM token limit edge cases in correlation tools'
-        }
-      };
-
-      return new Response(JSON.stringify(responsePayload), {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-          'X-Batch-Id': batchId,
-          'X-Large-Payload-Size': transactionsString.length.toString(),
-          'X-Pivot-Item-Id': pivotItemId,
-          'X-Validation-Code': validationCode.substring(0, 24) + '...'
-        }
-      });
-    } catch (error) {
-      console.error('Error in handleDashboard1Step5:', error);
-      return new Response(JSON.stringify({
-        error: 'Internal server error',
-        message: error.message
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
-  }
-
-  async function handleDashboard1Step6(request, env, corsHeaders) {
-    try {
-      const body = await request.json();
-      const { session_token, user_id, session_id, batch_id, validation_code, pivot_item_id, transactions_count } = body || {};
-
-      if (!session_token || !user_id || !session_id || !batch_id || !validation_code || !pivot_item_id || !transactions_count) {
-        return new Response(JSON.stringify({
-          error: 'Missing required fields',
-          required: ['session_token', 'session_id', 'user_id', 'batch_id', 'validation_code', 'pivot_item_id', 'transactions_count'],
-          hint: 'Use the values returned from Step 5'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      if (!env.DB) {
-        return new Response(JSON.stringify({
-          error: 'Database not available'
-        }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const user = await env.DB.prepare(
-        'SELECT id, username, session_token, session_id FROM users WHERE session_token = ? AND id = ? AND session_id = ?'
-      ).bind(session_token, user_id, session_id).first();
-
-      if (!user) {
-        return new Response(JSON.stringify({
-          error: 'Invalid session',
-          hint: 'Session token, session_id, or user_id is invalid'
-        }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const expectedCode = await sha256Base64(`${batch_id}|${pivot_item_id}|${session_token}|${session_id}|${user_id}|${transactions_count}`);
-
-      if (validation_code !== expectedCode) {
-        return new Response(JSON.stringify({
-          error: 'Validation code mismatch - correlation failed',
-          expected_hint: expectedCode.substring(0, 20) + '...',
-          received_hint: validation_code.substring(0, 20) + '...',
-          hint: 'Ensure you replayed the exact code from Step 5'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const responsePayload = {
-        success: true,
-        message: 'Step 6 completed - large payload correlation validated',
-        batch_id,
-        pivot_item_id,
-        transactions_count,
-        username: user.username,
-        validation_confirmed: true,
-        timestamp: new Date().toISOString()
-      };
-
-      return new Response(JSON.stringify(responsePayload), {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-          'X-Batch-Validated': batch_id,
-          'X-Pivot-Item-Id': pivot_item_id,
-          'X-Transactions-Count': transactions_count.toString()
-        }
-      });
-    } catch (error) {
-      console.error('Error in handleDashboard1Step6:', error);
-      return new Response(JSON.stringify({
-        error: 'Internal server error',
-        message: error.message
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
-  }
-
-// Utility Functions
-const ACCESS_COOKIE_NAME = 'lm_access';
-const ACCESS_VISIT_COOKIE_NAME = 'lm_access_visit';
-const ACCESS_VISIT_COOKIE_MAX_AGE_SECONDS = 2;
-
-function isTruthyEnvValue(value) {
-  if (typeof value !== 'string') return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 }
-
+__name(handleHttpTestStep2, "handleHttpTestStep2");
+async function handleDashboard1Step1(request, env, corsHeaders) {
+  try {
+    const body = await request.json();
+    const { session_token, user_id } = body;
+    if (!session_token || !user_id) {
+      return new Response(JSON.stringify({
+        error: "Missing required fields",
+        required: ["session_token", "user_id"],
+        hint: "This endpoint requires minimal session data for simplified testing"
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    if (!env.DB) {
+      return new Response(JSON.stringify({
+        error: "Database not available"
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const user = await env.DB.prepare(
+      "SELECT id, username, session_token, session_id, csrf_token, correlation_id FROM users WHERE session_token = ? AND id = ?"
+    ).bind(session_token, user_id).first();
+    if (!user) {
+      return new Response(JSON.stringify({
+        error: "Invalid session",
+        hint: "Session token or user_id is invalid"
+      }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const shortID = (Math.floor(Math.random() * 9) + 1).toString();
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    await env.DB.prepare(
+      "UPDATE users SET dashboard1_shortid = ?, dashboard1_shortid_timestamp = ? WHERE id = ?"
+    ).bind(shortID, timestamp, user.id).run();
+    return new Response(JSON.stringify({
+      success: true,
+      message: "Step 1 completed - shortID generated",
+      shortID,
+      // Short value like "1", "2", "3"
+      username: user.username,
+      user_id: user.id,
+      session_token: user.session_token,
+      session_id: user.session_id,
+      csrf_token: user.csrf_token,
+      correlation_id: user.correlation_id,
+      timestamp,
+      hint: "Use this shortID in Step 2 request"
+    }), {
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+        "X-Session-Token": user.session_token || "",
+        "X-Correlation-Id": user.correlation_id || "",
+        "X-ShortID": shortID,
+        // Also in header for multiple extraction options
+        "X-Timestamp": timestamp
+      }
+    });
+  } catch (error) {
+    console.error("Error in handleDashboard1Step1:", error);
+    return new Response(JSON.stringify({
+      error: "Internal server error",
+      message: error.message
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+}
+__name(handleDashboard1Step1, "handleDashboard1Step1");
+async function handleDashboard1Step2(request, env, corsHeaders) {
+  try {
+    const body = await request.json();
+    const { session_token, user_id, shortID } = body;
+    if (!session_token || !user_id || !shortID) {
+      return new Response(JSON.stringify({
+        error: "Missing required fields",
+        required: ["session_token", "user_id", "shortID"],
+        hint: "shortID must be extracted from Step 1 response"
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    if (!env.DB) {
+      return new Response(JSON.stringify({
+        error: "Database not available"
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const user = await env.DB.prepare(
+      "SELECT id, username, dashboard1_shortid, session_id, csrf_token, correlation_id, session_token FROM users WHERE session_token = ? AND id = ?"
+    ).bind(session_token, user_id).first();
+    if (!user) {
+      return new Response(JSON.stringify({
+        error: "Invalid session",
+        hint: "Session token or user_id is invalid"
+      }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    if (!/^[0-9]{1,2}$/.test(shortID)) {
+      return new Response(JSON.stringify({
+        error: "Invalid shortID format",
+        received: shortID,
+        expected: "Single digit number (1-9)",
+        hint: "shortID must be extracted from Step 1 response"
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    if (!user.dashboard1_shortid) {
+      return new Response(JSON.stringify({
+        error: "No shortID found",
+        hint: "You must call Step 1 first to generate a shortID",
+        correlation_test: "FAILED",
+        reason: "Missing Step 1 execution"
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    if (user.dashboard1_shortid !== shortID) {
+      return new Response(JSON.stringify({
+        error: "shortID mismatch - Correlation FAILED",
+        expected: user.dashboard1_shortid,
+        received: shortID,
+        hint: "The shortID you provided does not match the one generated in Step 1",
+        correlation_test: "FAILED",
+        reason: "Incorrect correlation value - correlation extraction failed or wrong value used"
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    const finalID = (Math.floor(Math.random() * 90) + 10).toString();
+    await env.DB.prepare(
+      "UPDATE users SET dashboard1_shortid = NULL, dashboard1_shortid_timestamp = NULL WHERE id = ?"
+    ).bind(user.id).run();
+    return new Response(JSON.stringify({
+      success: true,
+      message: "Step 2 completed - Correlation successful!",
+      username: user.username,
+      user_id: user.id,
+      shortID_received: shortID,
+      shortID_validated: true,
+      finalID,
+      // Another short value for additional testing
+      timestamp,
+      correlation_test: "PASSED",
+      hint: "Short value correlation is working correctly"
+    }), {
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+        "X-ShortID-Received": shortID,
+        "X-FinalID": finalID,
+        "X-Timestamp": timestamp,
+        "X-Correlation-Status": "PASSED"
+      }
+    });
+  } catch (error) {
+    console.error("Error in handleDashboard1Step2:", error);
+    return new Response(JSON.stringify({
+      error: "Internal server error",
+      message: error.message
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+}
+__name(handleDashboard1Step2, "handleDashboard1Step2");
+async function handleDashboard1Step3(request, env, corsHeaders) {
+  try {
+    const body = await request.json();
+    const { session_token, user_id, session_id } = body || {};
+    if (!session_token || !user_id || !session_id) {
+      return new Response(JSON.stringify({
+        error: "Missing required fields",
+        required: ["session_token", "session_id", "user_id"],
+        hint: "Send the full session body to generate the large viewstate"
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    if (!env.DB) {
+      return new Response(JSON.stringify({
+        error: "Database not available"
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const user = await env.DB.prepare(
+      "SELECT id, username, session_token, session_id, csrf_token, correlation_id FROM users WHERE session_token = ? AND id = ? AND session_id = ?"
+    ).bind(session_token, user_id, session_id).first();
+    if (!user) {
+      return new Response(JSON.stringify({
+        error: "Invalid session",
+        hint: "Session token, session_id, or user_id is invalid"
+      }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const state = await buildLargeViewState(user.session_id, user.session_token, user.id);
+    const responsePayload = {
+      success: true,
+      message: "Step 3 completed - large viewstate generated",
+      viewstate: state.viewstate,
+      viewstate_base64_length: state.viewstate.length,
+      viewstate_raw_length: state.rawLength,
+      signature: state.signature,
+      signature_hint: state.signature.substring(0, 12) + "...",
+      timestamp: state.timestamp,
+      constraints: {
+        minimum_view_length: 35e4,
+        includes_nonce_and_signature: true,
+        structure: ["v", "sid", "uid", "ts", "nonce", "sig", "view"]
+      }
+    };
+    return new Response(JSON.stringify(responsePayload), {
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+        "X-Viewstate-Signature": state.signature,
+        "X-Viewstate-Size": state.rawLength.toString(),
+        "X-Viewstate-Base64-Size": state.viewstate.length.toString()
+      }
+    });
+  } catch (error) {
+    console.error("Error in handleDashboard1Step3:", error);
+    return new Response(JSON.stringify({
+      error: "Internal server error",
+      message: error.message
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+}
+__name(handleDashboard1Step3, "handleDashboard1Step3");
+async function handleDashboard1Step4(request, env, corsHeaders) {
+  try {
+    const body = await request.json();
+    const { session_token, user_id, session_id, viewstate } = body || {};
+    if (!session_token || !user_id || !session_id || !viewstate) {
+      return new Response(JSON.stringify({
+        error: "Missing required fields",
+        required: ["session_token", "session_id", "user_id", "viewstate"],
+        hint: "Send the exact viewstate from Step 3 without trimming it"
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    if (!env.DB) {
+      return new Response(JSON.stringify({
+        error: "Database not available"
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const user = await env.DB.prepare(
+      "SELECT id, username, session_token, session_id FROM users WHERE session_token = ? AND id = ? AND session_id = ?"
+    ).bind(session_token, user_id, session_id).first();
+    if (!user) {
+      return new Response(JSON.stringify({
+        error: "Invalid session",
+        hint: "Session token, session_id, or user_id is invalid"
+      }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    let decoded;
+    let parsed;
+    try {
+      decoded = atob(viewstate);
+      parsed = JSON.parse(decoded);
+    } catch (err) {
+      return new Response(JSON.stringify({
+        error: "Invalid viewstate encoding",
+        details: err.message,
+        hint: "Viewstate must be the base64 string returned in Step 3"
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const issues = [];
+    const requiredKeys = ["v", "sid", "uid", "ts", "nonce", "sig", "view"];
+    const missingKeys = requiredKeys.filter((key) => !(key in parsed));
+    if (missingKeys.length > 0) {
+      issues.push(`Missing fields: ${missingKeys.join(", ")}`);
+    }
+    if (parsed.sid !== session_id) {
+      issues.push("Session ID inside viewstate does not match request session_id");
+    }
+    if (String(parsed.uid) !== String(user.id)) {
+      issues.push("User ID inside viewstate does not match request user_id");
+    }
+    if (!parsed.view || parsed.view.length < 35e4) {
+      issues.push("Viewstate payload is too small - expected a large ASP.NET style payload (>350KB raw)");
+    }
+    const recomputedSignature = await sha256Base64(`${session_token}|${session_id}|${user_id}|${parsed.nonce}|${parsed.ts}`);
+    if (parsed.sig !== recomputedSignature) {
+      issues.push("Signature mismatch - correlation failed");
+    }
+    if (issues.length > 0) {
+      return new Response(JSON.stringify({
+        error: "Viewstate validation failed",
+        issues,
+        received_structure: Object.keys(parsed),
+        received_lengths: {
+          raw_view_length: parsed.view ? parsed.view.length : 0,
+          base64_length: viewstate.length
+        }
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const responsePayload = {
+      success: true,
+      message: "Step 4 completed - large viewstate validated",
+      validated: true,
+      username: user.username,
+      user_id: user.id,
+      session_id: user.session_id,
+      signature_valid: true,
+      signature: parsed.sig,
+      view_lengths: {
+        raw_view_length: parsed.view.length,
+        base64_length: viewstate.length
+      },
+      timestamp: parsed.ts,
+      nonce: parsed.nonce
+    };
+    return new Response(JSON.stringify(responsePayload), {
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+        "X-Viewstate-Validated": "true",
+        "X-Viewstate-Signature": parsed.sig,
+        "X-Viewstate-Size": parsed.view.length.toString(),
+        "X-Viewstate-Nonce": parsed.nonce
+      }
+    });
+  } catch (error) {
+    console.error("Error in handleDashboard1Step4:", error);
+    return new Response(JSON.stringify({
+      error: "Internal server error",
+      message: error.message
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+}
+__name(handleDashboard1Step4, "handleDashboard1Step4");
+async function handleDashboard1Step5(request, env, corsHeaders) {
+  try {
+    const body = await request.json();
+    const { session_token, user_id, session_id, transactions, meta } = body || {};
+    if (!session_token || !user_id || !session_id || !transactions || !Array.isArray(transactions)) {
+      return new Response(JSON.stringify({
+        error: "Missing required fields",
+        required: ["session_token", "session_id", "user_id", "transactions"],
+        hint: "transactions must be an array and should be large (200KB+)"
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    if (!env.DB) {
+      return new Response(JSON.stringify({
+        error: "Database not available"
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const user = await env.DB.prepare(
+      "SELECT id, username, session_token, session_id FROM users WHERE session_token = ? AND id = ? AND session_id = ?"
+    ).bind(session_token, user_id, session_id).first();
+    if (!user) {
+      return new Response(JSON.stringify({
+        error: "Invalid session",
+        hint: "Session token, session_id, or user_id is invalid"
+      }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const minCount = 600;
+    if (transactions.length < minCount) {
+      return new Response(JSON.stringify({
+        error: "Payload too small",
+        hint: `Provide at least ${minCount} transaction objects to simulate bulk payloads`
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const transactionsString = JSON.stringify(transactions);
+    if (transactionsString.length < 5e5) {
+      return new Response(JSON.stringify({
+        error: "Payload size too small",
+        received_bytes: transactionsString.length,
+        hint: "Aim for >500KB to exercise large-body handling"
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const batchId = generateToken();
+    const pivotIndex = Math.min(Math.floor(transactions.length / 2), transactions.length - 1);
+    const pivotItem = transactions[pivotIndex] || {};
+    const pivotItemId = pivotItem.id ? String(pivotItem.id) : `pivot_${pivotIndex}`;
+    const validationCode = await sha256Base64(`${batchId}|${pivotItemId}|${session_token}|${session_id}|${user_id}|${transactions.length}`);
+    const responseFiller = generateFillerString(4e5);
+    const responseSignature = await sha256Base64(`${batchId}|${validationCode}|${responseFiller.substring(0, 100)}`);
+    const responsePayload = {
+      success: true,
+      message: "Step 5 completed - bulk payload accepted",
+      batch_id: batchId,
+      pivot_item_id: pivotItemId,
+      validation_code: validationCode,
+      transactions_count: transactions.length,
+      payload_bytes: transactionsString.length,
+      constraints: {
+        minimum_count: minCount,
+        minimum_bytes: 5e5
+      },
+      meta_echo: meta || null,
+      hint: "Send batch_id, pivot_item_id, validation_code, and transactions_count to Step 6",
+      // Large response data for edge case testing (correlation tools must handle large responses)
+      response_data: {
+        filler: responseFiller,
+        filler_length: responseFiller.length,
+        response_signature: responseSignature,
+        response_signature_hint: responseSignature.substring(0, 12) + "...",
+        purpose: "Large response payload to test LLM token limit edge cases in correlation tools"
+      }
+    };
+    return new Response(JSON.stringify(responsePayload), {
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+        "X-Batch-Id": batchId,
+        "X-Large-Payload-Size": transactionsString.length.toString(),
+        "X-Pivot-Item-Id": pivotItemId,
+        "X-Validation-Code": validationCode.substring(0, 24) + "..."
+      }
+    });
+  } catch (error) {
+    console.error("Error in handleDashboard1Step5:", error);
+    return new Response(JSON.stringify({
+      error: "Internal server error",
+      message: error.message
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+}
+__name(handleDashboard1Step5, "handleDashboard1Step5");
+async function handleDashboard1Step6(request, env, corsHeaders) {
+  try {
+    const body = await request.json();
+    const { session_token, user_id, session_id, batch_id, validation_code, pivot_item_id, transactions_count } = body || {};
+    if (!session_token || !user_id || !session_id || !batch_id || !validation_code || !pivot_item_id || !transactions_count) {
+      return new Response(JSON.stringify({
+        error: "Missing required fields",
+        required: ["session_token", "session_id", "user_id", "batch_id", "validation_code", "pivot_item_id", "transactions_count"],
+        hint: "Use the values returned from Step 5"
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    if (!env.DB) {
+      return new Response(JSON.stringify({
+        error: "Database not available"
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const user = await env.DB.prepare(
+      "SELECT id, username, session_token, session_id FROM users WHERE session_token = ? AND id = ? AND session_id = ?"
+    ).bind(session_token, user_id, session_id).first();
+    if (!user) {
+      return new Response(JSON.stringify({
+        error: "Invalid session",
+        hint: "Session token, session_id, or user_id is invalid"
+      }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const expectedCode = await sha256Base64(`${batch_id}|${pivot_item_id}|${session_token}|${session_id}|${user_id}|${transactions_count}`);
+    if (validation_code !== expectedCode) {
+      return new Response(JSON.stringify({
+        error: "Validation code mismatch - correlation failed",
+        expected_hint: expectedCode.substring(0, 20) + "...",
+        received_hint: validation_code.substring(0, 20) + "...",
+        hint: "Ensure you replayed the exact code from Step 5"
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
+    }
+    const responsePayload = {
+      success: true,
+      message: "Step 6 completed - large payload correlation validated",
+      batch_id,
+      pivot_item_id,
+      transactions_count,
+      username: user.username,
+      validation_confirmed: true,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    return new Response(JSON.stringify(responsePayload), {
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+        "X-Batch-Validated": batch_id,
+        "X-Pivot-Item-Id": pivot_item_id,
+        "X-Transactions-Count": transactions_count.toString()
+      }
+    });
+  } catch (error) {
+    console.error("Error in handleDashboard1Step6:", error);
+    return new Response(JSON.stringify({
+      error: "Internal server error",
+      message: error.message
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+  }
+}
+__name(handleDashboard1Step6, "handleDashboard1Step6");
+var ACCESS_COOKIE_NAME = "lm_access";
+var ACCESS_VISIT_COOKIE_NAME = "lm_access_visit";
+var ACCESS_VISIT_COOKIE_MAX_AGE_SECONDS = 2;
+function isTruthyEnvValue(value) {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+__name(isTruthyEnvValue, "isTruthyEnvValue");
 function shouldChallengeEveryVisit(env) {
   return isTruthyEnvValue(env.SITE_ACCESS_CHALLENGE_EVERY_VISIT);
 }
-
+__name(shouldChallengeEveryVisit, "shouldChallengeEveryVisit");
 function isVisitRequest(path, request) {
-  if (request.method !== 'GET') return false;
-  if (path === '/favicon.ico') return false;
-  if (path.startsWith('/api/')) return false;
-  if (path.startsWith('/images/')) return false;
-  if (path.startsWith('/static/')) return false;
+  if (request.method !== "GET") return false;
+  if (path === "/favicon.ico") return false;
+  if (path.startsWith("/api/")) return false;
+  if (path.startsWith("/images/")) return false;
+  if (path.startsWith("/static/")) return false;
   return true;
 }
-
+__name(isVisitRequest, "isVisitRequest");
 async function deriveVisitCookieValue(secret, nextPath) {
   const raw = await sha256Base64(`lm_access_visit_v1|${secret}|${nextPath}`);
-  return raw.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  return raw.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
-
+__name(deriveVisitCookieValue, "deriveVisitCookieValue");
 function buildVisitChallengeRedirectResponse(request, corsHeaders) {
   const url = new URL(request.url);
   const next = url.pathname + url.search;
-  const location = `/__access?next=${encodeURIComponent(next)}`;
+  const location = `/__access?auto=1&next=${encodeURIComponent(next)}`;
   return new Response(null, {
     status: 302,
-    headers: { ...corsHeaders, 'Cache-Control': 'no-store', 'Location': location }
+    headers: { ...corsHeaders, "Cache-Control": "no-store", "Location": location }
   });
 }
-
+__name(buildVisitChallengeRedirectResponse, "buildVisitChallengeRedirectResponse");
 async function enforceSiteAccess(request, env, corsHeaders) {
   const url = new URL(request.url);
   const secret = env.SITE_ACCESS_TOKEN;
-  if (typeof secret !== 'string' || secret.length === 0) {
-    return new Response('Site access not configured', {
+  if (typeof secret !== "string" || secret.length === 0) {
+    return new Response("Site access not configured", {
       status: 500,
-      headers: { ...corsHeaders, 'Cache-Control': 'no-store' }
+      headers: { ...corsHeaders, "Cache-Control": "no-store" }
     });
   }
-
   const expectedCookieValue = await deriveAccessCookieValue(secret);
-  const cookieValue = getCookieValue(request.headers.get('Cookie'), ACCESS_COOKIE_NAME);
+  const cookieValue = getCookieValue(request.headers.get("Cookie"), ACCESS_COOKIE_NAME);
   if (cookieValue && timingSafeEqual(cookieValue, expectedCookieValue)) {
     if (shouldChallengeEveryVisit(env) && isVisitRequest(url.pathname, request)) {
       const expectedVisitCookieValue = await deriveVisitCookieValue(secret, url.pathname + url.search);
-      const visitCookieValue = getCookieValue(request.headers.get('Cookie'), ACCESS_VISIT_COOKIE_NAME);
+      const visitCookieValue = getCookieValue(request.headers.get("Cookie"), ACCESS_VISIT_COOKIE_NAME);
       if (!visitCookieValue || !timingSafeEqual(visitCookieValue, expectedVisitCookieValue)) {
         return buildVisitChallengeRedirectResponse(request, corsHeaders);
       }
     }
     return null;
   }
-
   return buildAccessDeniedResponse(request, corsHeaders);
 }
-
+__name(enforceSiteAccess, "enforceSiteAccess");
 async function handleAccessGate(request, env, corsHeaders) {
   const url = new URL(request.url);
   const secret = env.SITE_ACCESS_TOKEN;
-  if (typeof secret !== 'string' || secret.length === 0) {
-    return new Response('Site access not configured', {
+  if (typeof secret !== "string" || secret.length === 0) {
+    return new Response("Site access not configured", {
       status: 500,
-      headers: { ...corsHeaders, 'Cache-Control': 'no-store' }
+      headers: { ...corsHeaders, "Cache-Control": "no-store" }
     });
   }
-
   const challengeEveryVisit = shouldChallengeEveryVisit(env);
   const expectedCookieValue = await deriveAccessCookieValue(secret);
-  const currentCookieValue = getCookieValue(request.headers.get('Cookie'), ACCESS_COOKIE_NAME);
+  const currentCookieValue = getCookieValue(request.headers.get("Cookie"), ACCESS_COOKIE_NAME);
   const alreadyUnlocked = currentCookieValue && timingSafeEqual(currentCookieValue, expectedCookieValue);
-  const isSecure = url.protocol === 'https:';
-  const nextFromQuery = sanitizeNextPath(url.searchParams.get('next'));
-  const nextPath = nextFromQuery || '/';
-
-  if (url.searchParams.get('logout') === '1') {
-    const clearCookie = buildSetCookieHeader(ACCESS_COOKIE_NAME, '', {
+  const isSecure = url.protocol === "https:";
+  const nextFromQuery = sanitizeNextPath(url.searchParams.get("next"));
+  const nextPath = nextFromQuery || "/";
+  const auto = url.searchParams.get("auto") === "1";
+  if (url.searchParams.get("logout") === "1") {
+    const clearCookie = buildSetCookieHeader(ACCESS_COOKIE_NAME, "", {
       maxAgeSeconds: 0,
       secure: isSecure
     });
-    const clearVisitCookie = buildSetCookieHeader(ACCESS_VISIT_COOKIE_NAME, '', {
+    const clearVisitCookie = buildSetCookieHeader(ACCESS_VISIT_COOKIE_NAME, "", {
       maxAgeSeconds: 0,
       secure: isSecure
     });
-
     const headers = new Headers({
       ...corsHeaders,
-      'Content-Type': 'text/html',
-      'Cache-Control': 'no-store'
+      "Content-Type": "text/html",
+      "Cache-Control": "no-store"
     });
-    headers.append('Set-Cookie', clearCookie);
-    headers.append('Set-Cookie', clearVisitCookie);
-
-    return new Response(getAccessGatePage({ status: 'logged_out', next: nextPath }), {
+    headers.append("Set-Cookie", clearCookie);
+    headers.append("Set-Cookie", clearVisitCookie);
+    return new Response(getAccessGatePage({ status: "logged_out", next: nextPath }), {
       status: 200,
       headers
     });
   }
-
-  if (request.method === 'GET') {
-    if (alreadyUnlocked && !challengeEveryVisit) {
-      return new Response(getAccessGatePage({ status: 'already_unlocked', next: nextPath }), {
+  if (request.method === "GET") {
+    if (alreadyUnlocked && auto && challengeEveryVisit) {
+      const visitCookieValue = await deriveVisitCookieValue(secret, nextPath);
+      const visitCookie = buildSetCookieHeader(ACCESS_VISIT_COOKIE_NAME, visitCookieValue, {
+        maxAgeSeconds: ACCESS_VISIT_COOKIE_MAX_AGE_SECONDS,
+        secure: isSecure
+      });
+      const headers = new Headers({
+        ...corsHeaders,
+        "Cache-Control": "no-store",
+        "Location": nextPath
+      });
+      headers.append("Set-Cookie", visitCookie);
+      return new Response(null, { status: 302, headers });
+    }
+    if (alreadyUnlocked) {
+      return new Response(getAccessGatePage({ status: "already_unlocked", next: nextPath }), {
         status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'text/html', 'Cache-Control': 'no-store' }
+        headers: { ...corsHeaders, "Content-Type": "text/html", "Cache-Control": "no-store" }
       });
     }
-
-    return new Response(getAccessGatePage({ next: nextPath, status: alreadyUnlocked ? 'visit_required' : null }), {
+    return new Response(getAccessGatePage({ next: nextPath }), {
       status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'text/html', 'Cache-Control': 'no-store' }
+      headers: { ...corsHeaders, "Content-Type": "text/html", "Cache-Control": "no-store" }
     });
   }
-
-  if (request.method === 'POST') {
+  if (request.method === "POST") {
     const { token, next } = await readAccessGateBody(request);
     const redirectTarget = sanitizeNextPath(next) || nextPath;
-
     if (!token) {
-      return new Response(getAccessGatePage({ error: 'Missing access token', next: redirectTarget }), {
+      return new Response(getAccessGatePage({ error: "Missing access token", next: redirectTarget }), {
         status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'text/html', 'Cache-Control': 'no-store' }
+        headers: { ...corsHeaders, "Content-Type": "text/html", "Cache-Control": "no-store" }
       });
     }
-
     if (!timingSafeEqual(token, secret)) {
-      return new Response(getAccessGatePage({ error: 'Invalid access token', next: redirectTarget }), {
+      return new Response(getAccessGatePage({ error: "Invalid access token", next: redirectTarget }), {
         status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'text/html', 'Cache-Control': 'no-store' }
+        headers: { ...corsHeaders, "Content-Type": "text/html", "Cache-Control": "no-store" }
       });
     }
-
     const setCookie = buildSetCookieHeader(ACCESS_COOKIE_NAME, expectedCookieValue, {
       secure: isSecure
     });
-
     const headers = new Headers({
       ...corsHeaders,
-      'Cache-Control': 'no-store',
-      'Location': redirectTarget
+      "Cache-Control": "no-store",
+      "Location": redirectTarget
     });
-    headers.append('Set-Cookie', setCookie);
-
+    headers.append("Set-Cookie", setCookie);
     if (challengeEveryVisit) {
       const visitCookieValue = await deriveVisitCookieValue(secret, redirectTarget);
       const visitCookie = buildSetCookieHeader(ACCESS_VISIT_COOKIE_NAME, visitCookieValue, {
         maxAgeSeconds: ACCESS_VISIT_COOKIE_MAX_AGE_SECONDS,
         secure: isSecure
       });
-      headers.append('Set-Cookie', visitCookie);
+      headers.append("Set-Cookie", visitCookie);
     }
-
     return new Response(null, {
       status: 302,
       headers
     });
   }
-
-  return new Response('Method Not Allowed', { status: 405, headers: corsHeaders });
+  return new Response("Method Not Allowed", { status: 405, headers: corsHeaders });
 }
-
+__name(handleAccessGate, "handleAccessGate");
 function getCookieValue(cookieHeader, name) {
   if (!cookieHeader) return null;
-
-  const parts = cookieHeader.split(';');
+  const parts = cookieHeader.split(";");
   for (const part of parts) {
     const trimmed = part.trim();
     if (!trimmed) continue;
-    const equalsIndex = trimmed.indexOf('=');
+    const equalsIndex = trimmed.indexOf("=");
     if (equalsIndex === -1) continue;
     const key = trimmed.slice(0, equalsIndex).trim();
     if (key !== name) continue;
     return trimmed.slice(equalsIndex + 1);
   }
-
   return null;
 }
-
+__name(getCookieValue, "getCookieValue");
 function buildSetCookieHeader(name, value, { maxAgeSeconds, secure }) {
-  const pieces = [`${name}=${value}`, 'Path=/'];
-  if (maxAgeSeconds !== undefined && maxAgeSeconds !== null) {
+  const pieces = [`${name}=${value}`, "Path=/"];
+  if (maxAgeSeconds !== void 0 && maxAgeSeconds !== null) {
     pieces.push(`Max-Age=${maxAgeSeconds}`);
   }
-  pieces.push('SameSite=Lax', 'HttpOnly');
-  if (secure) pieces.push('Secure');
-  return pieces.join('; ');
+  pieces.push("SameSite=Lax", "HttpOnly");
+  if (secure) pieces.push("Secure");
+  return pieces.join("; ");
 }
-
+__name(buildSetCookieHeader, "buildSetCookieHeader");
 function sanitizeNextPath(value) {
-  if (typeof value !== 'string' || value.length === 0) return null;
-  if (!value.startsWith('/')) return null;
-  if (value.startsWith('//')) return null;
+  if (typeof value !== "string" || value.length === 0) return null;
+  if (!value.startsWith("/")) return null;
+  if (value.startsWith("//")) return null;
   if (/[\r\n]/.test(value)) return null;
   return value;
 }
-
+__name(sanitizeNextPath, "sanitizeNextPath");
 function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+  return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
-
+__name(escapeHtml, "escapeHtml");
 function timingSafeEqual(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (typeof a !== "string" || typeof b !== "string") return false;
   const encoder = new TextEncoder();
   const aBytes = encoder.encode(a);
   const bBytes = encoder.encode(b);
@@ -1957,106 +1760,93 @@ function timingSafeEqual(a, b) {
   }
   return result === 0;
 }
-
+__name(timingSafeEqual, "timingSafeEqual");
 async function deriveAccessCookieValue(secret) {
   const raw = await sha256Base64(`lm_access_cookie_v1|${secret}`);
-  return raw.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  return raw.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
-
+__name(deriveAccessCookieValue, "deriveAccessCookieValue");
 function buildAccessDeniedResponse(request, corsHeaders) {
   const url = new URL(request.url);
   const accessUrl = `/__access?next=${encodeURIComponent(url.pathname + url.search)}`;
-  const acceptsHtml = (request.headers.get('Accept') || '').includes('text/html');
-
-  if (acceptsHtml && request.method === 'GET') {
+  const acceptsHtml = (request.headers.get("Accept") || "").includes("text/html");
+  if (acceptsHtml && request.method === "GET") {
     return new Response(getAccessDeniedPage({ accessUrl }), {
       status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'text/html', 'Cache-Control': 'no-store' }
+      headers: { ...corsHeaders, "Content-Type": "text/html", "Cache-Control": "no-store" }
     });
   }
-
   return new Response(JSON.stringify({
-    error: 'Unauthorized',
-    message: 'Unlock this private demo via /__access and retry.',
+    error: "Unauthorized",
+    message: "Unlock this private demo via /__access and retry.",
     access_url: accessUrl
   }), {
     status: 401,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
+    headers: { ...corsHeaders, "Content-Type": "application/json", "Cache-Control": "no-store" }
   });
 }
-
+__name(buildAccessDeniedResponse, "buildAccessDeniedResponse");
 async function readAccessGateBody(request) {
-  const contentType = request.headers.get('Content-Type') || '';
-
-  if (contentType.includes('application/json')) {
+  const contentType = request.headers.get("Content-Type") || "";
+  if (contentType.includes("application/json")) {
     const body = await request.json().catch(() => null);
     return {
-      token: body && typeof body.token === 'string' ? body.token : null,
-      next: body && typeof body.next === 'string' ? body.next : null
+      token: body && typeof body.token === "string" ? body.token : null,
+      next: body && typeof body.next === "string" ? body.next : null
     };
   }
-
   const form = await request.formData().catch(() => null);
   if (form) {
-    const token = form.get('token');
-    const next = form.get('next');
+    const token = form.get("token");
+    const next = form.get("next");
     return {
-      token: typeof token === 'string' ? token : token ? String(token) : null,
-      next: typeof next === 'string' ? next : next ? String(next) : null
+      token: typeof token === "string" ? token : token ? String(token) : null,
+      next: typeof next === "string" ? next : next ? String(next) : null
     };
   }
-
   return { token: null, next: null };
 }
-
+__name(readAccessGateBody, "readAccessGateBody");
 function generateToken() {
-  return 'tok_' + Math.random().toString(36).substr(2, 16) + Date.now().toString(36);
+  return "tok_" + Math.random().toString(36).substr(2, 16) + Date.now().toString(36);
 }
-
-function generateFillerString(targetLength = 400000) {
-  // Generate highly random content that doesn't compress well
-  // Using crypto.getRandomValues for true randomness that defeats gzip
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+__name(generateToken, "generateToken");
+function generateFillerString(targetLength = 4e5) {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   const charsLen = chars.length;
   const result = new Array(targetLength);
-
-  // Generate in chunks of 65536 (max for getRandomValues)
   const chunkSize = 65536;
   let offset = 0;
-
   while (offset < targetLength) {
     const remaining = targetLength - offset;
     const currentChunkSize = Math.min(chunkSize, remaining);
     const randomBytes = new Uint8Array(currentChunkSize);
     crypto.getRandomValues(randomBytes);
-
     for (let i = 0; i < currentChunkSize; i++) {
       result[offset + i] = chars[randomBytes[i] % charsLen];
     }
     offset += currentChunkSize;
   }
-
-  return result.join('');
+  return result.join("");
 }
-
+__name(generateFillerString, "generateFillerString");
 async function sha256Base64(input) {
   const encoder = new TextEncoder();
   const data = encoder.encode(input);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const hashString = String.fromCharCode.apply(null, hashArray);
   return btoa(hashString);
 }
-
+__name(sha256Base64, "sha256Base64");
 async function buildLargeViewState(sessionId, sessionToken, userId) {
-  const timestamp = new Date().toISOString();
+  const timestamp = (/* @__PURE__ */ new Date()).toISOString();
   const nonce = generateToken();
   const payloadBase = `${sessionToken}|${sessionId}|${userId}|${nonce}|${timestamp}`;
   const signature = await sha256Base64(payloadBase);
-  const filler = generateFillerString(); // ~400KB raw to exceed 128k-token contexts
-
+  const filler = generateFillerString();
   const stateObject = {
-    v: '1.0',
+    v: "1.0",
     sid: sessionId,
     uid: userId,
     ts: timestamp,
@@ -2064,10 +1854,8 @@ async function buildLargeViewState(sessionId, sessionToken, userId) {
     sig: signature,
     view: filler
   };
-
   const raw = JSON.stringify(stateObject);
   const viewstate = btoa(raw);
-
   return {
     viewstate,
     rawLength: raw.length,
@@ -2075,11 +1863,9 @@ async function buildLargeViewState(sessionId, sessionToken, userId) {
     timestamp
   };
 }
-
-// Shared styling and branding
-const LOGO_IMAGE_PATH = '/images/loadmagic-shadow.png';
-
-const BASE_STYLES = `
+__name(buildLargeViewState, "buildLargeViewState");
+var LOGO_IMAGE_PATH = "/images/loadmagic-shadow.png";
+var BASE_STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
   :root {
@@ -2341,15 +2127,14 @@ const BASE_STYLES = `
     padding-left: 18px;
   }
 `;
-
-function renderHeader(title, subtitle = '') {
+function renderHeader(title, subtitle = "") {
   return `
     <header class="topbar">
       <img src="${LOGO_IMAGE_PATH}" alt="LoadMagic.AI logo" class="logo">
       <div class="titles">
         <p class="eyebrow">LoadMagic.AI</p>
         <h1>${title}</h1>
-        ${subtitle ? `<p class="subtitle">${subtitle}</p>` : ''}
+        ${subtitle ? `<p class="subtitle">${subtitle}</p>` : ""}
       </div>
       <nav class="nav">
         <a href="/">Home</a>
@@ -2361,25 +2146,14 @@ function renderHeader(title, subtitle = '') {
     </header>
   `;
 }
-
-function getAccessGatePage({ error = null, status = null, next = '/' } = {}) {
+__name(renderHeader, "renderHeader");
+function getAccessGatePage({ error = null, status = null, next = "/" } = {}) {
   const safeNext = escapeHtml(next);
-  const notice = error
-    ? `<div class="error"><strong>Access denied:</strong> ${escapeHtml(error)}</div>`
-    : status === 'already_unlocked'
-      ? `<div class="success"><strong>Already unlocked.</strong> You can continue.</div>`
-      : status === 'logged_out'
-        ? `<div class="info"><strong>Logged out.</strong> Access cookie cleared.</div>`
-        : status === 'visit_required'
-          ? `<div class="info"><strong>Per-visit access enabled.</strong> Enter the access token to continue.</div>`
-        : `<div class="info"><strong>Private demo.</strong> Enter the access token to continue.</div>`;
-
-  const actions = status === 'already_unlocked'
-    ? `
+  const notice = error ? `<div class="error"><strong>Access denied:</strong> ${escapeHtml(error)}</div>` : status === "already_unlocked" ? `<div class="success"><strong>Already unlocked.</strong> You can continue.</div>` : status === "logged_out" ? `<div class="info"><strong>Logged out.</strong> Access cookie cleared.</div>` : `<div class="info"><strong>Private demo.</strong> Enter the access token to continue.</div>`;
+  const actions = status === "already_unlocked" ? `
       <p><a href="${safeNext}">Continue to ${safeNext}</a></p>
       <p><a href="/__access?logout=1">Log out</a></p>
-    `
-    : `
+    ` : `
       <form method="POST" action="/__access" style="display: grid; gap: 10px; max-width: 520px;">
         <label for="token">Access token</label>
         <input id="token" name="token" type="password" autocomplete="current-password" required />
@@ -2388,7 +2162,6 @@ function getAccessGatePage({ error = null, status = null, next = '/' } = {}) {
       </form>
       <p style="margin-top: 12px; color: var(--muted);">After unlocking, a session cookie is set so HAR exports typically keep access intact.</p>
     `;
-
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -2398,7 +2171,7 @@ function getAccessGatePage({ error = null, status = null, next = '/' } = {}) {
 <body class="page">
   <div class="content">
     <div class="card">
-      <h2 class="section-title">LoadMagic – Private Demo</h2>
+      <h2 class="section-title">LoadMagic \u2013 Private Demo</h2>
       ${notice}
       <p style="margin-top: 12px;">Next: <code>${safeNext}</code></p>
       ${actions}
@@ -2407,9 +2180,9 @@ function getAccessGatePage({ error = null, status = null, next = '/' } = {}) {
 </body>
 </html>`;
 }
-
+__name(getAccessGatePage, "getAccessGatePage");
 function getAccessDeniedPage({ accessUrl } = {}) {
-  const safeAccessUrl = escapeHtml(accessUrl || '/__access');
+  const safeAccessUrl = escapeHtml(accessUrl || "/__access");
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -2429,8 +2202,7 @@ function getAccessDeniedPage({ accessUrl } = {}) {
 </body>
 </html>`;
 }
-
-// HTML Pages
+__name(getAccessDeniedPage, "getAccessDeniedPage");
 function getHomePage() {
   return `<!DOCTYPE html>
 <html>
@@ -2449,7 +2221,7 @@ function getHomePage() {
     </style>
 </head>
 <body class="page">
-    ${renderHeader('LoadMagic Test Demo', 'Dark mode experience for LoadMagic.AI correlation flows')}
+    ${renderHeader("LoadMagic Test Demo", "Dark mode experience for LoadMagic.AI correlation flows")}
     <div class="content">
       <div class="card">
           <p>This demo app provides both HTML forms and JSON API endpoints for testing your dynamic correlation plugin.</p>
@@ -2620,11 +2392,11 @@ function getHomePage() {
           localStorage.removeItem('next_step_token');
           location.reload();
       }
-      </script>
+      <\/script>
   </body>
   </html>`;
-  }
-  
+}
+__name(getHomePage, "getHomePage");
 function getLoginPage() {
   return `<!DOCTYPE html>
 <html>
@@ -2643,7 +2415,7 @@ function getLoginPage() {
     </style>
 </head>
 <body class="page">
-    ${renderHeader('Login', 'Generate fresh tokens for correlation')}
+    ${renderHeader("Login", "Generate fresh tokens for correlation")}
     <div class="content">
       <div class="card form-card">
         <h2 class="section-title">Login Form</h2>
@@ -2655,7 +2427,7 @@ function getLoginPage() {
         
         <div id="result"></div>
         
-        <p><a href="/">← Back to Home</a></p>
+        <p><a href="/">\u2190 Back to Home</a></p>
       </div>
     </div>
     
@@ -2751,11 +2523,11 @@ function getLoginPage() {
               alert('Error testing authenticated request: ' + error.message);
           }
       }
-      </script>
+      <\/script>
   </body>
   </html>`;
-  }
-  
+}
+__name(getLoginPage, "getLoginPage");
 function getDashboardPage() {
   return `<!DOCTYPE html>
 <html>
@@ -2773,13 +2545,13 @@ function getDashboardPage() {
     </style>
 </head>
 <body class="page">
-    ${renderHeader('Dashboard', 'Authenticated flows and multi-step tokens')}
+    ${renderHeader("Dashboard", "Authenticated flows and multi-step tokens")}
     <div class="content">
       <div class="card session-info" id="session-info">
           <h3>Session Information</h3>
           <p>Loading session data...</p>
           <p id="session-warning" style="display:none; color:#fbbf24; font-weight:600; margin-top:8px;">
-            No session token detected. Please login first (Home → Login) to generate fresh tokens. Clear browser storage if you suspect stale data.
+            No session token detected. Please login first (Home \u2192 Login) to generate fresh tokens. Clear browser storage if you suspect stale data.
           </p>
       </div>
       
@@ -2820,7 +2592,7 @@ function getDashboardPage() {
       
       <div class="card" id="test-results"></div>
       
-      <p><a href="/">← Back to Home</a> | <a href="/login">Login</a></p>
+      <p><a href="/">\u2190 Back to Home</a> | <a href="/login">Login</a></p>
     </div>
     
     <script>
@@ -3149,11 +2921,11 @@ function getDashboardPage() {
           
           resultDiv.innerHTML = html + resultDiv.innerHTML;
       }
-      </script>
+      <\/script>
   </body>
   </html>`;
-  }
-
+}
+__name(getDashboardPage, "getDashboardPage");
 function getDashboard1Page() {
   return `<!DOCTYPE html>
 <html>
@@ -3185,7 +2957,7 @@ function getDashboard1Page() {
     </style>
 </head>
 <body class="page">
-    ${renderHeader('Dashboard1', 'Short + large state correlation test')}
+    ${renderHeader("Dashboard1", "Short + large state correlation test")}
     <div class="content">
       <div class="card header">
           <h2>[TARGET] Dashboard1 - Short + Viewstate Correlation Test</h2>
@@ -3197,7 +2969,7 @@ function getDashboard1Page() {
           <h3>Session Information</h3>
           <p>Loading session data...</p>
           <p id="session-warning" style="display:none; color:#fbbf24; font-weight:600; margin-top:8px;">
-            No session token detected. Please login first (Home → Login) to generate fresh tokens. Clear browser storage if you suspect stale data.
+            No session token detected. Please login first (Home \u2192 Login) to generate fresh tokens. Clear browser storage if you suspect stale data.
           </p>
       </div>
 
@@ -3213,41 +2985,41 @@ function getDashboard1Page() {
           <div class="step-box">
               <h4>Step 1: Get Dynamic shortID</h4>
               <p>Call <code>POST /api/dashboard1/step1</code> to receive a short dynamic ID (1-9)</p>
-              <button onclick="runStep1()">▶ Run Step 1</button>
+              <button onclick="runStep1()">\u25B6 Run Step 1</button>
           </div>
 
           <div class="step-box">
               <h4>Step 2: Use Dynamic shortID</h4>
               <p>Call <code>POST /api/dashboard1/step2</code> with the shortID from Step 1</p>
-              <button onclick="runStep2()" class="btn-step2" id="step2Button" disabled>▶ Run Step 2</button>
+              <button onclick="runStep2()" class="btn-step2" id="step2Button" disabled>\u25B6 Run Step 2</button>
               <small style="display: block; margin-top: 5px; color: var(--muted);">Enabled after Step 1 completes</small>
           </div>
 
           <div class="step-box heavy">
               <h4>Step 3: Generate Large Viewstate</h4>
               <p>Call <code>POST /api/dashboard1/step3</code> with full session data to generate a signed, ~530KB <code>__VIEWSTATE</code>-style payload. Capture the base64 value for replay.</p>
-              <button onclick="runStep3()" class="btn-step3" id="step3Button">▶ Run Step 3</button>
+              <button onclick="runStep3()" class="btn-step3" id="step3Button">\u25B6 Run Step 3</button>
               <small class="note">Requires session_token + session_id + user_id; ~400KB raw / ~530KB base64 (exceeds LLM token limits).</small>
           </div>
 
           <div class="step-box heavy">
               <h4>Step 4: Replay Viewstate</h4>
               <p>Call <code>POST /api/dashboard1/step4</code> with the exact viewstate from Step 3. Server validates signature, size (&gt;=60kb), and embedded session metadata.</p>
-              <button onclick="runStep4()" class="btn-step4" id="step4Button" disabled>▶ Run Step 4</button>
+              <button onclick="runStep4()" class="btn-step4" id="step4Button" disabled>\u25B6 Run Step 4</button>
               <small class="note">Enabled after Step 3 succeeds</small>
           </div>
 
           <div class="step-box heavy">
               <h4>Step 5: Send Huge JSON Payload + Large Response</h4>
               <p>Call <code>POST /api/dashboard1/step5</code> with 500KB+ JSON (800+ items). Response returns ~400KB+ with batch_id and validation code buried in the large response.</p>
-              <button onclick="runStep5()" class="btn-step3" id="step5Button">▶ Run Step 5</button>
+              <button onclick="runStep5()" class="btn-step3" id="step5Button">\u25B6 Run Step 5</button>
               <small class="note">Client sends ~800KB request; server returns ~400KB response (both exceed LLM token limits).</small>
           </div>
 
           <div class="step-box heavy">
               <h4>Step 6: Validate Batch Correlation</h4>
               <p>Call <code>POST /api/dashboard1/step6</code> with the batch_id + validation_code from Step 5. Server recomputes and confirms correctness.</p>
-              <button onclick="runStep6()" class="btn-step4" id="step6Button" disabled>▶ Run Step 6</button>
+              <button onclick="runStep6()" class="btn-step4" id="step6Button" disabled>\u25B6 Run Step 6</button>
               <small class="note">Enabled after Step 5 succeeds</small>
           </div>
       </div>
@@ -3255,7 +3027,7 @@ function getDashboard1Page() {
       <div class="card" id="test-results"></div>
 
       <div class="nav-links card">
-          <a href="/">← Home</a> |
+          <a href="/">\u2190 Home</a> |
           <a href="/login">Login</a> |
           <a href="/dashboard">Main Dashboard</a>
       </div>
@@ -3669,11 +3441,11 @@ function buildLargeTransactions(count = 800, fillerLength = 5000, targetBytes = 
 
           resultDiv.innerHTML = html + resultDiv.innerHTML;
       }
-      </script>
+      <\/script>
   </body>
   </html>`;
-  }
-
+}
+__name(getDashboard1Page, "getDashboard1Page");
 function getCheckoutPage() {
   return `<!DOCTYPE html>
 <html>
@@ -3686,7 +3458,7 @@ function getCheckoutPage() {
     </style>
 </head>
 <body class="page">
-    ${renderHeader('Checkout', 'Dark-mode checkout with body-auth correlation')}
+    ${renderHeader("Checkout", "Dark-mode checkout with body-auth correlation")}
     <div class="content">
       <div id="user-status" class="card user-status">
           <p>Loading session status...</p>
@@ -3696,15 +3468,15 @@ function getCheckoutPage() {
         <div class="checkout-section">
             <h3>[PACKAGE] Mock Cart Items</h3>
             <div id="cart-summary">
-                <p>• Laptop Pro - $1299.99</p>
-                <p>• Wireless Mouse - $29.99</p>
+                <p>\u2022 Laptop Pro - $1299.99</p>
+                <p>\u2022 Wireless Mouse - $29.99</p>
                 <hr>
                 <p><strong>Total: $1329.98</strong></p>
             </div>
         </div>
         
         <div class="checkout-section">
-            <h3>💳 Payment Information</h3>
+            <h3>\u{1F4B3} Payment Information</h3>
             <div class="form-group">
                 <label>Payment Method:</label>
                 <select id="paymentMethod">
@@ -3720,14 +3492,15 @@ function getCheckoutPage() {
         </div>
         
         <div class="checkout-section">
-            <h3>📍 Shipping Address</h3>
+            <h3>\u{1F4CD} Shipping Address</h3>
             <div class="form-group">
                 <label>Full Name:</label>
                 <input type="text" id="fullName" placeholder="John Doe">
             </div>
             <div class="form-group">
                 <label>Address:</label>
-                <textarea id="address" rows="3" placeholder="123 Main St\nAnytown, ST 12345"></textarea>
+                <textarea id="address" rows="3" placeholder="123 Main St
+Anytown, ST 12345"></textarea>
             </div>
         </div>
       </div>
@@ -3744,7 +3517,7 @@ function getCheckoutPage() {
       
       <div class="card" id="checkout-result"></div>
       
-      <p><a href="/products">← Back to Products</a> | <a href="/">Home</a></p>
+      <p><a href="/products">\u2190 Back to Products</a> | <a href="/">Home</a></p>
     </div>
     
     <script>
@@ -3872,15 +3645,14 @@ function getCheckoutPage() {
       function goToCart() {
           alert('Mock cart view - in real app this would show detailed cart contents');
       }
-      </script>
+      <\/script>
   </body>
   </html>`;
-  }
-  
+}
+__name(getCheckoutPage, "getCheckoutPage");
 function getProductDetailPage(request) {
   const url = new URL(request.url);
-  const productId = url.pathname.split('/').pop();
-  
+  const productId = url.pathname.split("/").pop();
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -3897,7 +3669,7 @@ function getProductDetailPage(request) {
     </style>
 </head>
 <body class="page">
-    ${renderHeader('Product Details', 'View catalog entries for correlation')}
+    ${renderHeader("Product Details", "View catalog entries for correlation")}
     <div class="content">
       <h2>Product Details</h2>
       
@@ -3908,7 +3680,7 @@ function getProductDetailPage(request) {
       <div id="product-detail" class="loading card">Loading product ${productId}...</div>
       
       <div class="card" style="margin-top: 10px;">
-          <a href="/products">← Back to Products</a> | 
+          <a href="/products">\u2190 Back to Products</a> | 
           <a href="/">Home</a>
       </div>
     </div>
@@ -3967,7 +3739,7 @@ function getProductDetailPage(request) {
                       '<p><strong>Last Updated:</strong> ' + new Date(product.last_updated).toLocaleString() + '</p>' +
                       '<div style="margin-top: 20px;">' +
                           '<button onclick="window.addToCart(' + product.id + ')">Add to Cart</button>' +
-                          '<button onclick="checkSimilar(\'' + product.category + '\')">View Similar Products</button>' +
+                          '<button onclick="checkSimilar('' + product.category + '')">View Similar Products</button>' +
                       '</div>' +
                   '</div>';
           } catch (error) {
@@ -3990,11 +3762,11 @@ function getProductDetailPage(request) {
           localStorage.removeItem('next_step_token');
           checkLoginStatus();
       }
-      </script>
+      <\/script>
   </body>
   </html>`;
-  }
-  
+}
+__name(getProductDetailPage, "getProductDetailPage");
 function getProductsPage() {
   return `<!DOCTYPE html>
 <html>
@@ -4013,7 +3785,7 @@ function getProductsPage() {
     </style>
 </head>
 <body class="page">
-    ${renderHeader('Products', 'Browse catalog entries for correlation')}
+    ${renderHeader("Products", "Browse catalog entries for correlation")}
     <div class="content">
       <h2>Products Catalog</h2>
       
@@ -4031,7 +3803,7 @@ function getProductsPage() {
       
       <div id="products">Loading...</div>
       
-      <p><a href="/">← Back to Home</a></p>
+      <p><a href="/">\u2190 Back to Home</a></p>
     </div>
     
     <script>
@@ -4170,7 +3942,12 @@ function getProductsPage() {
           checkLoginStatus();
       }
       
-      </script>
+      <\/script>
   </body>
   </html>`;
-  }
+}
+__name(getProductsPage, "getProductsPage");
+export {
+  index_default as default
+};
+//# sourceMappingURL=index.js.map
