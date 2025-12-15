@@ -263,6 +263,82 @@ The following API endpoints are available, demonstrating various authentication 
     ```
 *   **Response**: JSON object confirming `validation_confirmed`, with `batch_id`, `pivot_item_id`, and `transactions_count`. Includes `X-Batch-Validated`, `X-Pivot-Item-Id`, `X-Transactions-Count` headers.
 
+### `POST /api/dashboard1/step7` (Flow A1 - Headers + Cookies - Step 1)
+
+*   **Description**: Starts Flow A1. Returns the real CSRF token in a response header and sets a cookie-based Flow A session. The response body also contains a misleading `csrf` value.
+*   **Request Body**:
+    ```json
+    {}
+    ```
+*   **Response**: JSON object with metadata and a decoy `csrf` field. Includes:
+    *   `Set-Cookie: flowa_session=...` (HttpOnly session cookie)
+    *   `X-CSRF-TOKEN: tok_...` (the real tokenA to reuse in Step 8)
+
+### `POST /api/dashboard1/step8` (Flow A1 - Headers + Cookies - Step 2)
+
+*   **Description**: Confirms Flow A1. Requires the Flow A session cookie plus the header-only CSRF token from Step 7, replayed in both header and body.
+*   **Request Headers**:
+    *   `X-CSRF-TOKEN: tok_...` (from Step 7 response header)
+*   **Request Body**:
+    ```json
+    {
+      "csrf": "tok_..." // Must match X-CSRF-TOKEN exactly
+    }
+    ```
+*   **Response**: JSON object confirming success.
+
+### `POST /api/dashboard1/step9` (Flow A2 - Ambiguity + Decoys + Scope - Step 1)
+
+*   **Description**: Starts Flow A2. Returns ambiguous candidates plus 50–200 decoys (default 200); the **real** next token is `meta.csrf`. Also returns `sessionId` vs `admin.sessionId` to test scope selection.
+*   **Request Body**:
+    ```json
+    { "decoy_count": 200 }
+    ```
+*   **Response**: JSON object containing:
+    *   `csrf` (decoy), `previous_csrf` (decoy), `meta.csrf` (real token)
+    *   `sessionId` and `admin.sessionId` (scope ambiguity)
+    *   `decoys` (50–200 random-looking values, default 200)
+    *   `Set-Cookie: flowa2_session=...` (HttpOnly session cookie)
+
+### `POST /api/dashboard1/step10` (Flow A2 - Ambiguity + Decoys + Scope - Step 2)
+
+*   **Description**: Confirms Flow A2. Requires correct token selection (`meta.csrf`) and correct scope selection (`admin.sessionId`).
+*   **Request Headers**:
+    *   `X-FlowA-CSRF: tok_...` (must be `meta.csrf` from Step 9)
+    *   `X-Admin-SessionId: sess_...` (must be `admin.sessionId` from Step 9)
+*   **Request Body**:
+    ```json
+    {
+      "csrf": "tok_..." // Must be meta.csrf (NOT top-level csrf)
+    }
+    ```
+*   **Response**: JSON object confirming success.
+
+### `POST /api/dashboard1/step11` (Flow B - Encoding + Noise - Step 1)
+
+*   **Description**: Returns an HTML page containing a hidden input named `csrf_html` whose value is **HTML entity encoded** (e.g. contains `&amp;`). Also includes a decoy `csrf_decoy` plus static and random noise fields that should NOT be reused.
+*   **Request Body**:
+    ```json
+    {}
+    ```
+*   **Response**: `text/html` and:
+    *   `Set-Cookie: flowb_session=...` (HttpOnly session cookie)
+    *   Hidden input `csrf_html="..."` (HTML-encoded real token for Step 12)
+    *   Noise fields: `static_noise_###` (static) and `uuid_noise_###` (per-request)
+
+### `POST /api/dashboard1/step12` (Flow B - Encoding + Noise - Step 2)
+
+*   **Description**: Validates that you decoded the HTML-encoded token from Step 11 before reuse. Rejects values that still contain HTML entities (e.g. `&amp;`).
+*   **Request Headers**:
+    *   `X-HTML-CSRF: tok_...` (decoded value from Step 11’s `csrf_html`)
+*   **Request Body**:
+    ```json
+    {
+      "csrf": "tok_..." // Must exactly match X-HTML-CSRF and the decoded token
+    }
+    ```
+*   **Response**: JSON object confirming success.
+
 ## 5. Utility Functions
 
 *   `generateToken()`: Generates a unique string token prefixed with `tok_`.

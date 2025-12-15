@@ -360,28 +360,41 @@ Authorization: Bearer {session_token}
 
 These endpoints back the interactive page at `/dashboard1` and are designed to validate correlation tooling against modern header/cookie flows.
 
-#### POST `/api/dashboard1/step7` (Flow A start: headers + cookies)
+#### POST `/api/dashboard1/step7` (Flow A1 start: headers + cookies)
 - Returns `Set-Cookie: flowa_session=...` (HttpOnly session cookie)
 - Returns header `X-CSRF-TOKEN: tok_...` (real tokenA)
 - Response body contains a decoy `csrf` value
 
-#### POST `/api/dashboard1/step8` (Flow A submit: header↔body + ambiguity + decoys)
+#### POST `/api/dashboard1/step8` (Flow A1 confirm: header↔body)
 **Requires**:
 - Cookie: `flowa_session=...`
 - Header: `X-CSRF-TOKEN: <tokenA>`
-- Body: `{ "csrf": "<tokenA>", "decoy_count": 200 }` (`decoy_count` optional, 50–200)
+- Body: `{ "csrf": "<tokenA>" }`
 
-**Returns**:
-- Ambiguity: `csrf` (decoy), `previous_csrf` (decoy), `meta.csrf` (real tokenB)
-- Scope confusion: `sessionId` vs `admin.sessionId`
-- High token density: `decoys` object (default 200)
+#### POST `/api/dashboard1/step9` (Flow A2 start: ambiguity + decoys + scope)
+- Returns `Set-Cookie: flowa2_session=...` (HttpOnly session cookie)
+- Returns JSON with ambiguous candidates and 50–200 decoys (default 200); the real next token is `meta.csrf`
 
-#### POST `/api/dashboard1/step9` (Flow A confirm: body→header + scope)
+#### POST `/api/dashboard1/step10` (Flow A2 confirm: body→header + scope)
 **Requires**:
-- Cookie: `flowa_session=...`
+- Cookie: `flowa2_session=...`
 - Header: `X-FlowA-CSRF: <meta.csrf>`
 - Header: `X-Admin-SessionId: <admin.sessionId>`
 - Body: `{ "csrf": "<meta.csrf>" }`
+
+#### POST `/api/dashboard1/step11` (Flow B start: HTML-encoded token + noise)
+- Returns `Set-Cookie: flowb_session=...` (HttpOnly session cookie)
+- Returns `text/html` containing:
+  - real token in a hidden input `csrf_html="..."` (HTML entity encoded, e.g. contains `&amp;`)
+  - decoy token `csrf_decoy="..."`
+  - static high-entropy noise fields (`static_noise_###`) (never reused)
+  - per-request UUID noise fields (`uuid_noise_###`) (never reused)
+
+#### POST `/api/dashboard1/step12` (Flow B confirm: decoded token)
+**Requires**:
+- Cookie: `flowb_session=...`
+- Header: `X-HTML-CSRF: <decoded csrf_html>`
+- Body: `{ "csrf": "<decoded csrf_html>" }`
 
 ## HTML Pages
 
@@ -416,8 +429,8 @@ These endpoints back the interactive page at `/dashboard1` and are designed to v
 - Logout functionality
 
 ### Dashboard1 Page (`/dashboard1`)
-- Edge-case test page with Steps 1–9
-- Includes Flow A (headers + cookies + ambiguity + 200 decoys)
+- Edge-case test page with Steps 1–12
+- Includes Flow A1 (headers + cookies), Flow A2 (ambiguity + decoys + scope), and Flow B (HTML decoding + noise)
 - Designed for network capture + token replay in JMeter/Locust/K6
 
 ### Checkout Page (`/checkout`)
@@ -464,7 +477,7 @@ All endpoints include comprehensive CORS headers:
 ```
 Access-Control-Allow-Origin: *
 Access-Control-Allow-Methods: GET, POST, OPTIONS
-Access-Control-Allow-Headers: Content-Type, Authorization, X-CSRF-TOKEN, X-FlowA-CSRF, X-Admin-SessionId
+Access-Control-Allow-Headers: Content-Type, Authorization, X-CSRF-TOKEN, X-FlowA-CSRF, X-Admin-SessionId, X-HTML-CSRF
 Access-Control-Expose-Headers: X-CSRF-TOKEN, X-FlowA-CSRF, X-Admin-SessionId, ...
 ```
 

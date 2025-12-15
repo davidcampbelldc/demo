@@ -8,7 +8,7 @@ export default {
 	      const corsHeaders = {
 	        'Access-Control-Allow-Origin': '*',
 	        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-	        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-CSRF-TOKEN, X-FlowA-CSRF, X-Admin-SessionId',
+	        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-CSRF-TOKEN, X-FlowA-CSRF, X-Admin-SessionId, X-HTML-CSRF',
 	        'Access-Control-Expose-Headers': 'X-Session-Token, X-Session-Id, X-CSRF-Token, X-Correlation-Id, X-User-Id, X-ShortID, X-FinalID, X-Timestamp, X-CSRF-TOKEN, X-FlowA-CSRF, X-Admin-SessionId',
 	      };
   
@@ -124,6 +124,15 @@ export default {
 
 	          case path === '/api/dashboard1/step9' && method === 'POST':
 	            return await handleDashboard1Step9(request, env, corsHeaders);
+
+	          case path === '/api/dashboard1/step10' && method === 'POST':
+	            return await handleDashboard1Step10(request, env, corsHeaders);
+
+	          case path === '/api/dashboard1/step11' && method === 'POST':
+	            return await handleDashboard1Step11(request, env, corsHeaders);
+
+	          case path === '/api/dashboard1/step12' && method === 'POST':
+	            return await handleDashboard1Step12(request, env, corsHeaders);
 
 	          case path === '/favicon.ico' && method === 'GET':
 	            if (!env.ASSETS) {
@@ -1784,19 +1793,19 @@ Congratulations! Your correlation is working perfectly!`;
 	      headers.append('Set-Cookie', cookieHint);
 	      headers.append('Set-Cookie', cookieNoise);
 
-	      return new Response(JSON.stringify({
-	        success: true,
-	        flow: 'Flow A',
-	        step: 7,
-	        purpose: 'Header-only token + cookies (with body decoy)',
-	        edge_cases: [
-	          'Extract dynamic token from response header (X-CSRF-TOKEN)',
-	          'Persist HttpOnly cookie (flowa_session)',
-	          'Ignore misleading csrf in response body'
-	        ],
-	        csrf: decoyCsrf,
-	        note: 'Step 8 requires X-CSRF-TOKEN from this response (not the body csrf).'
-	      }), { status: 200, headers });
+		      return new Response(JSON.stringify({
+		        success: true,
+		        flow: 'Flow A1',
+		        step: 7,
+		        purpose: 'Header-only token + cookies (with body decoy)',
+		        edge_cases: [
+		          'Extract dynamic token from response header (X-CSRF-TOKEN)',
+		          'Persist HttpOnly cookie (flowa_session)',
+		          'Ignore misleading csrf in response body'
+		        ],
+		        csrf: decoyCsrf,
+		        note: 'Step 8 validates header/cookie reuse (X-CSRF-TOKEN + body.csrf).'
+		      }), { status: 200, headers });
 	    } catch (error) {
 	      console.error('Error in handleDashboard1Step7:', error);
 	      return new Response(JSON.stringify({
@@ -1813,12 +1822,6 @@ Congratulations! Your correlation is working perfectly!`;
 	    try {
 	      const body = await request.json().catch(() => null);
 	      const csrfFromBody = body && typeof body.csrf === 'string' ? body.csrf : null;
-	      const decoyCountRaw = body && (typeof body.decoy_count === 'number' || typeof body.decoy_count === 'string')
-	        ? Number(body.decoy_count)
-	        : null;
-	      const decoyCount = Number.isFinite(decoyCountRaw)
-	        ? Math.max(FLOWA_DECOY_COUNT_MIN, Math.min(FLOWA_DECOY_COUNT_MAX, Math.floor(decoyCountRaw)))
-	        : FLOWA_DECOY_COUNT_DEFAULT;
 
 	      const flowaSession = getCookieValue(request.headers.get('Cookie'), FLOWA_SESSION_COOKIE_NAME);
 	      if (!flowaSession) {
@@ -1881,41 +1884,18 @@ Congratulations! Your correlation is working perfectly!`;
 	        });
 	      }
 
-	      const correctNextCsrf = await deriveFlowAToken(flowaSession, 'csrfB');
-	      const csrfDecoy = await deriveFlowAToken(flowaSession, 'csrf_decoy');
-	      const previousCsrf = await deriveFlowAToken(flowaSession, 'previous_csrf');
-	      const sessionId = await deriveFlowASessionId(flowaSession, 'sessionId');
-	      const adminSessionId = await deriveFlowASessionId(flowaSession, 'admin.sessionId');
-
-	      const decoys = {};
-	      for (let i = 1; i <= decoyCount; i++) {
-	        const key = `decoy_${String(i).padStart(3, '0')}`;
-	        decoys[key] = `tok_${randomHex(16)}`;
-	      }
-
 	      return new Response(JSON.stringify({
 	        success: true,
-	        flow: 'Flow A',
+	        flow: 'Flow A1',
 	        step: 8,
-	        purpose: 'Ambiguity + scope + high token density (200)',
-	        edge_cases: [
-	          'Header → header reuse (X-CSRF-TOKEN)',
-	          'Header → body reuse (body.csrf)',
-	          'Multiple similar candidates (csrf/previous_csrf/meta.csrf)',
-	          'Same token name, different scope (sessionId vs admin.sessionId)',
-	          'High token density decoys (50–200)'
-	        ],
-	        csrf: csrfDecoy,
-	        previous_csrf: previousCsrf,
-	        meta: {
-	          csrf: correctNextCsrf
+	        message: 'Flow A1 completed - header-only token + cookie correlation validated',
+	        correlation_test: 'PASSED',
+	        validated: {
+	          cookie_session: true,
+	          header_token: true,
+	          header_to_body: true
 	        },
-	        sessionId,
-	        admin: {
-	          sessionId: adminSessionId
-	        },
-	        decoy_count: decoyCount,
-	        decoys
+	        timestamp: new Date().toISOString()
 	      }), {
 	        status: 200,
 	        headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
@@ -1934,15 +1914,84 @@ Congratulations! Your correlation is working perfectly!`;
 
 	  async function handleDashboard1Step9(request, env, corsHeaders) {
 	    try {
+	      const url = new URL(request.url);
+	      const isSecure = url.protocol === 'https:';
+	      const body = await request.json().catch(() => null);
+	      const decoyCountRaw = body && (typeof body.decoy_count === 'number' || typeof body.decoy_count === 'string')
+	        ? Number(body.decoy_count)
+	        : null;
+	      const decoyCount = Number.isFinite(decoyCountRaw)
+	        ? Math.max(FLOWA_DECOY_COUNT_MIN, Math.min(FLOWA_DECOY_COUNT_MAX, Math.floor(decoyCountRaw)))
+	        : FLOWA_DECOY_COUNT_DEFAULT;
+
+	      const flowa2Session = `flowa2_${generateToken()}`;
+	      const correctNextCsrf = await deriveFlowAToken(flowa2Session, 'csrfB');
+	      const csrfDecoy = await deriveFlowAToken(flowa2Session, 'csrf_decoy');
+	      const previousCsrf = await deriveFlowAToken(flowa2Session, 'previous_csrf');
+	      const sessionId = await deriveFlowASessionId(flowa2Session, 'sessionId');
+	      const adminSessionId = await deriveFlowASessionId(flowa2Session, 'admin.sessionId');
+
+	      const decoys = {};
+	      for (let i = 1; i <= decoyCount; i++) {
+	        const key = `decoy_${String(i).padStart(3, '0')}`;
+	        decoys[key] = `tok_${randomHex(16)}`;
+	      }
+
+	      const headers = new Headers({
+	        ...corsHeaders,
+	        'Content-Type': 'application/json',
+	        'Cache-Control': 'no-store'
+	      });
+	      headers.append('Set-Cookie', buildSetCookieHeader(FLOWA2_SESSION_COOKIE_NAME, flowa2Session, { secure: isSecure }));
+
+	      return new Response(JSON.stringify({
+	        success: true,
+	        flow: 'Flow A2',
+	        step: 9,
+	        purpose: 'Ambiguity + scope + high token density (200)',
+	        edge_cases: [
+	          'Multiple similar candidates (csrf/previous_csrf/meta.csrf)',
+	          'Same token name, different scope (sessionId vs admin.sessionId)',
+	          'High token density decoys (50–200)',
+	          'Body → header reuse (meta.csrf, admin.sessionId)',
+	          'Body → body reuse (meta.csrf)'
+	        ],
+	        csrf: csrfDecoy,
+	        previous_csrf: previousCsrf,
+	        meta: {
+	          csrf: correctNextCsrf
+	        },
+	        sessionId,
+	        admin: {
+	          sessionId: adminSessionId
+	        },
+	        decoy_count: decoyCount,
+	        decoys,
+	        note: 'Step 10 must use meta.csrf in BOTH body.csrf and X-FlowA-CSRF, and admin.sessionId in X-Admin-SessionId.'
+	      }), { status: 200, headers });
+	    } catch (error) {
+	      console.error('Error in handleDashboard1Step9:', error);
+	      return new Response(JSON.stringify({
+	        error: 'Internal server error',
+	        message: error.message
+	      }), {
+	        status: 500,
+	        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+	      });
+	    }
+	  }
+
+	  async function handleDashboard1Step10(request, env, corsHeaders) {
+	    try {
 	      const body = await request.json().catch(() => null);
 	      const csrfFromBody = body && typeof body.csrf === 'string' ? body.csrf : null;
 
-	      const flowaSession = getCookieValue(request.headers.get('Cookie'), FLOWA_SESSION_COOKIE_NAME);
-	      if (!flowaSession) {
+	      const flowa2Session = getCookieValue(request.headers.get('Cookie'), FLOWA2_SESSION_COOKIE_NAME);
+	      if (!flowa2Session) {
 	        return new Response(JSON.stringify({
-	          error: 'Missing Flow A session cookie',
-	          required: [`Cookie: ${FLOWA_SESSION_COOKIE_NAME}=...`],
-	          hint: 'Run Step 7 first to receive the flowa_session cookie'
+	          error: 'Missing Flow A2 session cookie',
+	          required: [`Cookie: ${FLOWA2_SESSION_COOKIE_NAME}=...`],
+	          hint: 'Run Step 9 first to receive the flowa2_session cookie'
 	        }), {
 	          status: 401,
 	          headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
@@ -1956,34 +2005,32 @@ Congratulations! Your correlation is working perfectly!`;
 	        return new Response(JSON.stringify({
 	          error: 'Missing required fields',
 	          required: ['Header: X-FlowA-CSRF', 'Header: X-Admin-SessionId', 'Body: csrf'],
-	          hint: 'Use meta.csrf and admin.sessionId from Step 8 response'
+	          hint: 'Use meta.csrf and admin.sessionId from Step 9 response'
 	        }), {
 	          status: 400,
 	          headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
 	        });
 	      }
 
-	      const expectedCsrf = await deriveFlowAToken(flowaSession, 'csrfB');
-	      const expectedAdminSessionId = await deriveFlowASessionId(flowaSession, 'admin.sessionId');
+	      if (csrfFromBody !== csrfFromHeader) {
+	        return new Response(JSON.stringify({
+	          error: 'Header/body mismatch - correlation FAILED',
+	          correlation_test: 'FAILED',
+	          hint: 'Header X-FlowA-CSRF must exactly match body.csrf'
+	        }), {
+	          status: 400,
+	          headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
+	        });
+	      }
+
+	      const expectedCsrf = await deriveFlowAToken(flowa2Session, 'csrfB');
+	      const expectedAdminSessionId = await deriveFlowASessionId(flowa2Session, 'admin.sessionId');
 
 	      if (csrfFromHeader !== expectedCsrf) {
 	        return new Response(JSON.stringify({
-	          error: 'CSRF header mismatch - correlation FAILED',
+	          error: 'CSRF mismatch - correlation FAILED',
 	          correlation_test: 'FAILED',
-	          received_hint: csrfFromHeader.substring(0, 16),
-	          expected_hint: expectedCsrf.substring(0, 16),
-	          hint: 'Use meta.csrf from Step 8 response in the X-FlowA-CSRF header'
-	        }), {
-	          status: 400,
-	          headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
-	        });
-	      }
-
-	      if (csrfFromBody !== expectedCsrf) {
-	        return new Response(JSON.stringify({
-	          error: 'CSRF body mismatch - correlation FAILED',
-	          correlation_test: 'FAILED',
-	          hint: 'Body csrf must match meta.csrf from Step 8 response (NOT top-level csrf)'
+	          hint: 'Use meta.csrf from Step 9 response (NOT top-level csrf)'
 	        }), {
 	          status: 400,
 	          headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
@@ -1994,7 +2041,7 @@ Congratulations! Your correlation is working perfectly!`;
 	        return new Response(JSON.stringify({
 	          error: 'Admin sessionId scope mismatch - correlation FAILED',
 	          correlation_test: 'FAILED',
-	          hint: 'Use admin.sessionId from Step 8 response (NOT top-level sessionId) in X-Admin-SessionId'
+	          hint: 'Use admin.sessionId from Step 9 response (NOT top-level sessionId) in X-Admin-SessionId'
 	        }), {
 	          status: 400,
 	          headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
@@ -2003,13 +2050,14 @@ Congratulations! Your correlation is working perfectly!`;
 
 	      return new Response(JSON.stringify({
 	        success: true,
-	        flow: 'Flow A',
-	        step: 9,
-	        message: 'Flow A completed - header/body + scope correlation validated',
+	        flow: 'Flow A2',
+	        step: 10,
+	        message: 'Flow A2 completed - ambiguity + scope + decoy resistance validated',
 	        correlation_test: 'PASSED',
 	        validated: {
-	          csrf: true,
-	          admin_session_scope: true
+	          meta_csrf: true,
+	          admin_session_scope: true,
+	          body_to_header: true
 	        },
 	        timestamp: new Date().toISOString()
 	      }), {
@@ -2017,7 +2065,177 @@ Congratulations! Your correlation is working perfectly!`;
 	        headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
 	      });
 	    } catch (error) {
-	      console.error('Error in handleDashboard1Step9:', error);
+	      console.error('Error in handleDashboard1Step10:', error);
+	      return new Response(JSON.stringify({
+	        error: 'Internal server error',
+	        message: error.message
+	      }), {
+	        status: 500,
+	        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+	      });
+	    }
+	  }
+
+	  // Dashboard1 Flow B - HTML-encoded vs raw + noise values (static + random)
+	  async function handleDashboard1Step11(request, env, corsHeaders) {
+	    try {
+	      const url = new URL(request.url);
+	      const isSecure = url.protocol === 'https:';
+
+	      const flowbSession = `flowb_${generateToken()}`;
+	      const rawToken = await deriveFlowBToken(flowbSession, 'csrf_html');
+	      const rawDecoyToken = await deriveFlowBToken(flowbSession, 'csrf_decoy');
+
+	      const encodedToken = escapeHtml(rawToken);
+	      const encodedDecoyToken = escapeHtml(rawDecoyToken);
+
+	      const staticNoiseInputs = [];
+	      for (let i = 1; i <= FLOWB_STATIC_NOISE_COUNT; i++) {
+	        const hash = await sha256Hex(`flowb_static_noise_v1|${i}`);
+	        staticNoiseInputs.push({
+	          name: `static_noise_${String(i).padStart(3, '0')}`,
+	          value: `tok_${hash.slice(0, 32)}`
+	        });
+	      }
+
+	      const randomNoiseInputs = [];
+	      for (let i = 1; i <= FLOWB_RANDOM_NOISE_COUNT; i++) {
+	        randomNoiseInputs.push({
+	          name: `uuid_noise_${String(i).padStart(3, '0')}`,
+	          value: randomUuid()
+	        });
+	      }
+
+	      const buildHiddenInput = ({ name, value }) =>
+	        `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}" />`;
+
+	      const html = `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Dashboard1 Flow B - HTML Encoded Token</title>
+  </head>
+  <body>
+	    <h2>Dashboard1 - Flow B (Encoding + Noise)</h2>
+	    <p><strong>Purpose:</strong> token is HTML-encoded in the response body and must be decoded before reuse.</p>
+	    <p><strong>Next:</strong> call <code>POST /api/dashboard1/step12</code> with the decoded token in both header and JSON body.</p>
+
+    <form>
+      <h3>Real token (HTML-encoded)</h3>
+      <p>Extract from HTML as text (regex) to observe <code>&amp;amp;</code> vs <code>&amp;</code> difference.</p>
+      <input type="hidden" name="csrf_html" value="${encodedToken}" />
+
+      <h3>Decoy token (also HTML-encoded)</h3>
+      <input type="hidden" name="csrf_decoy" value="${encodedDecoyToken}" />
+
+      <h3>Noise: high-entropy but static</h3>
+      ${staticNoiseInputs.map(buildHiddenInput).join('\n      ')}
+
+      <h3>Noise: uncorrelatable random data (per-request UUIDs)</h3>
+      ${randomNoiseInputs.map(buildHiddenInput).join('\n      ')}
+    </form>
+  </body>
+</html>`;
+
+	      const headers = new Headers({
+	        ...corsHeaders,
+	        'Content-Type': 'text/html',
+	        'Cache-Control': 'no-store'
+	      });
+	      headers.append('Set-Cookie', buildSetCookieHeader(FLOWB_SESSION_COOKIE_NAME, flowbSession, { secure: isSecure }));
+
+	      return new Response(html, { status: 200, headers });
+	    } catch (error) {
+	      console.error('Error in handleDashboard1Step11:', error);
+	      return new Response(JSON.stringify({
+	        error: 'Internal server error',
+	        message: error.message
+	      }), {
+	        status: 500,
+	        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+	      });
+	    }
+	  }
+
+	  async function handleDashboard1Step12(request, env, corsHeaders) {
+	    try {
+	      const flowbSession = getCookieValue(request.headers.get('Cookie'), FLOWB_SESSION_COOKIE_NAME);
+	      if (!flowbSession) {
+	        return new Response(JSON.stringify({
+	          error: 'Missing Flow B session cookie',
+	          required: [`Cookie: ${FLOWB_SESSION_COOKIE_NAME}=...`],
+	          hint: 'Run Step 11 first to receive the flowb_session cookie'
+	        }), {
+	          status: 401,
+	          headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
+	        });
+	      }
+
+	      const headerToken = request.headers.get('X-HTML-CSRF');
+	      const body = await request.json().catch(() => null);
+	      const bodyToken = body && typeof body.csrf === 'string' ? body.csrf : null;
+
+	      if (!headerToken || !bodyToken) {
+	        return new Response(JSON.stringify({
+	          error: 'Missing required fields',
+	          required: ['Header: X-HTML-CSRF', 'Body: csrf'],
+	          hint: 'Use the decoded csrf_html token from Step 11 in BOTH header and body'
+	        }), {
+	          status: 400,
+	          headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
+	        });
+	      }
+
+	      const expectedRawToken = await deriveFlowBToken(flowbSession, 'csrf_html');
+
+	      if (looksHtmlEntityEncoded(headerToken) || looksHtmlEntityEncoded(bodyToken)) {
+	        return new Response(JSON.stringify({
+	          error: 'Token appears HTML-encoded - decode required',
+	          correlation_test: 'FAILED',
+	          hint: 'Your value still contains HTML entities like &amp; or &lt;. Decode HTML entities before reuse (e.g. &amp;amp; → &amp;).'
+	        }), {
+	          status: 400,
+	          headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
+	        });
+	      }
+
+	      if (headerToken !== bodyToken) {
+	        return new Response(JSON.stringify({
+	          error: 'Header/body mismatch - correlation FAILED',
+	          correlation_test: 'FAILED',
+	          hint: 'Header X-HTML-CSRF must exactly match body.csrf'
+	        }), {
+	          status: 400,
+	          headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
+	        });
+	      }
+
+	      if (headerToken !== expectedRawToken) {
+	        return new Response(JSON.stringify({
+	          error: 'Token mismatch - correlation FAILED',
+	          correlation_test: 'FAILED',
+	          received_hint: headerToken.substring(0, 24),
+	          expected_hint: expectedRawToken.substring(0, 24),
+	          hint: 'Use the decoded csrf_html token from Step 11 (NOT csrf_decoy, and NOT the HTML-encoded form).'
+	        }), {
+	          status: 400,
+	          headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
+	        });
+	      }
+
+	      return new Response(JSON.stringify({
+	        success: true,
+	        flow: 'Flow B',
+	        step: 12,
+	        message: 'Flow B completed - HTML decoding + body→header reuse validated',
+	        correlation_test: 'PASSED',
+	        timestamp: new Date().toISOString()
+	      }), {
+	        status: 200,
+	        headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
+	      });
+	    } catch (error) {
+	      console.error('Error in handleDashboard1Step12:', error);
 	      return new Response(JSON.stringify({
 	        error: 'Internal server error',
 	        message: error.message
@@ -2035,9 +2253,13 @@ Congratulations! Your correlation is working perfectly!`;
 	const FLOWA_SESSION_COOKIE_NAME = 'flowa_session';
 	const FLOWA_HINT_COOKIE_NAME = 'flowa_hint';
 	const FLOWA_NOISE_COOKIE_NAME = 'flowa_noise';
+	const FLOWA2_SESSION_COOKIE_NAME = 'flowa2_session';
 	const FLOWA_DECOY_COUNT_DEFAULT = 200;
 	const FLOWA_DECOY_COUNT_MIN = 50;
 	const FLOWA_DECOY_COUNT_MAX = 200;
+	const FLOWB_SESSION_COOKIE_NAME = 'flowb_session';
+	const FLOWB_STATIC_NOISE_COUNT = 12;
+	const FLOWB_RANDOM_NOISE_COUNT = 12;
 
 function isTruthyEnvValue(value) {
   if (typeof value !== 'string') return false;
@@ -2320,6 +2542,15 @@ async function readAccessGateBody(request) {
 	  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 	}
 
+	function randomUuid() {
+	  const hex = randomHex(16);
+	  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+	}
+
+	function looksHtmlEntityEncoded(value) {
+	  return typeof value === 'string' && /&(amp|lt|gt|quot|#39);/i.test(value);
+	}
+
 	async function sha256Hex(input) {
 	  const encoder = new TextEncoder();
 	  const data = encoder.encode(input);
@@ -2336,6 +2567,13 @@ async function readAccessGateBody(request) {
 	async function deriveFlowASessionId(flowaSession, purpose) {
 	  const hash = await sha256Hex(`flowa_v1|${purpose}|${flowaSession}`);
 	  return `sess_${hash.slice(0, 14)}`;
+	}
+
+	async function deriveFlowBToken(flowbSession, purpose) {
+	  const hash = await sha256Hex(`flowb_v1|${purpose}|${flowbSession}`);
+	  const left = hash.slice(0, 16);
+	  const right = hash.slice(16, 32);
+	  return `tok_${left}&sig=${right}`;
 	}
 
 	function generateFillerString(targetLength = 400000) {
@@ -3526,15 +3764,17 @@ function getDashboard1Page() {
           </p>
       </div>
 
-	      <div class="card test-section">
-	          <h3>[INFO] Test Flow Overview</h3>
-	          <p>Four correlation edge-case packs in one place: tiny numeric IDs (Steps 1-2), oversized signed viewstate (Steps 3-4), bulk JSON payloads (Steps 5-6), and header/cookie ambiguity with high token density (Steps 7-9).</p>
-	          <ul>
-	            <li><strong>Short values:</strong> 1-9 IDs that break naive regexes.</li>
-	            <li><strong>Large viewstate:</strong> ~500KB base64 payload with nonce + signature that must be replayed intact.</li>
-	            <li><strong>Bulk JSON:</strong> 500KB+ request bodies with hundreds of items and a buried validation code.</li>
-	            <li><strong>Headers + cookies + ambiguity:</strong> header-only token extraction, cookie persistence, and 200 decoy tokens.</li>
-	          </ul>
+			      <div class="card test-section">
+			          <h3>[INFO] Test Flow Overview</h3>
+			          <p>Six correlation edge-case packs in one place: tiny numeric IDs (Steps 1-2), oversized signed viewstate (Steps 3-4), bulk JSON payloads (Steps 5-6), header-only token + cookies (Steps 7-8), ambiguity/scope + 200 decoys (Steps 9-10), and HTML-encoded token handling with noise (Steps 11-12).</p>
+			          <ul>
+			            <li><strong>Short values:</strong> 1-9 IDs that break naive regexes.</li>
+			            <li><strong>Large viewstate:</strong> ~500KB base64 payload with nonce + signature that must be replayed intact.</li>
+			            <li><strong>Bulk JSON:</strong> 500KB+ request bodies with hundreds of items and a buried validation code.</li>
+			            <li><strong>Headers + cookies:</strong> extract token from response header and replay into header + body.</li>
+				            <li><strong>Ambiguity + decoys + scope:</strong> 200 candidates; real token is nested (<code>meta.csrf</code>) and scope matters (<code>admin.sessionId</code>).</li>
+			            <li><strong>Encoding + noise:</strong> HTML entity decoding plus static + random noise that must be ignored.</li>
+			          </ul>
 
           <div class="step-box">
               <h4>Step 1: Get Dynamic shortID</h4>
@@ -3577,26 +3817,45 @@ function getDashboard1Page() {
 	              <small class="note">Enabled after Step 5 succeeds</small>
 	          </div>
 
-	          <div class="step-box">
-	              <h4>Step 7: Flow A Start (Header Token + Cookies)</h4>
-	              <p>Call <code>POST /api/dashboard1/step7</code>. Extract <code>X-CSRF-TOKEN</code> from response headers and persist the <code>flowa_session</code> cookie. Body contains a decoy <code>csrf</code>.</p>
-	              <button onclick="runStep7()" id="step7Button">▶ Run Step 7</button>
-	          </div>
+		          <div class="step-box">
+		              <h4>Step 7: Flow A1 Start (Header Token + Cookies)</h4>
+		              <p>Call <code>POST /api/dashboard1/step7</code>. Extract <code>X-CSRF-TOKEN</code> from response headers and persist the <code>flowa_session</code> cookie. Body contains a decoy <code>csrf</code>.</p>
+		              <button onclick="runStep7()" id="step7Button">▶ Run Step 7</button>
+		          </div>
 
-	          <div class="step-box">
-	              <h4>Step 8: Flow A Submit (Header ↔ Body + 200 Decoys)</h4>
-	              <p>Call <code>POST /api/dashboard1/step8</code> using <code>X-CSRF-TOKEN</code> in BOTH request header and body (<code>csrf</code>). Response returns ambiguous tokens and 200 decoys; the real next token is <code>meta.csrf</code>.</p>
-	              <button onclick="runStep8()" class="btn-step2" id="step8Button" disabled>▶ Run Step 8</button>
-	              <small class="note">Enabled after Step 7 succeeds</small>
-	          </div>
+		          <div class="step-box">
+		              <h4>Step 8: Flow A1 Confirm (Header ↔ Body)</h4>
+		              <p>Call <code>POST /api/dashboard1/step8</code> using <code>X-CSRF-TOKEN</code> in BOTH request header and body (<code>csrf</code>). Server fails unless you replay the exact value from Step 7.</p>
+		              <button onclick="runStep8()" class="btn-step2" id="step8Button" disabled>▶ Run Step 8</button>
+		              <small class="note">Enabled after Step 7 succeeds</small>
+		          </div>
 
-	          <div class="step-box">
-	              <h4>Step 9: Flow A Confirm (Body → Header + Scope)</h4>
-	              <p>Call <code>POST /api/dashboard1/step9</code> with <code>meta.csrf</code> from Step 8 in BOTH body (<code>csrf</code>) and <code>X-FlowA-CSRF</code> header, and send <code>admin.sessionId</code> in <code>X-Admin-SessionId</code>.</p>
-	              <button onclick="runStep9()" class="btn-step4" id="step9Button" disabled>▶ Run Step 9</button>
-	              <small class="note">Enabled after Step 8 succeeds</small>
-	          </div>
-	      </div>
+		          <div class="step-box">
+		              <h4>Step 9: Flow A2 Start (Ambiguity + 200 Decoys + Scope)</h4>
+		              <p>Call <code>POST /api/dashboard1/step9</code> to receive ambiguous candidates and 200 decoys. The real next token is <code>meta.csrf</code>, and the correct scoped session is <code>admin.sessionId</code>.</p>
+		              <button onclick="runStep9()" class="btn-step3" id="step9Button">▶ Run Step 9</button>
+		          </div>
+
+		          <div class="step-box">
+		              <h4>Step 10: Flow A2 Confirm (Body → Header + Scope)</h4>
+		              <p>Call <code>POST /api/dashboard1/step10</code> with <code>meta.csrf</code> from Step 9 in BOTH body (<code>csrf</code>) and <code>X-FlowA-CSRF</code> header, and send <code>admin.sessionId</code> in <code>X-Admin-SessionId</code>.</p>
+		              <button onclick="runStep10()" class="btn-step4" id="step10Button" disabled>▶ Run Step 10</button>
+		              <small class="note">Enabled after Step 9 succeeds</small>
+		          </div>
+
+		          <div class="step-box">
+		              <h4>Step 11: Flow B Start (HTML‑Encoded Token + Noise)</h4>
+		              <p>Call <code>POST /api/dashboard1/step11</code> (returns <code>text/html</code>). Extract <code>csrf_html</code> from the HTML response (you’ll see <code>&amp;amp;</code>), decode HTML entities, and persist the <code>flowb_session</code> cookie. The HTML also contains static + random noise fields that should NOT be reused.</p>
+		              <button onclick="runStep11()" id="step11Button">▶ Run Step 11</button>
+		          </div>
+
+		          <div class="step-box">
+		              <h4>Step 12: Flow B Confirm (Decoded Token)</h4>
+		              <p>Call <code>POST /api/dashboard1/step12</code> with the decoded token in BOTH header (<code>X-HTML-CSRF</code>) and JSON body (<code>csrf</code>). Server rejects the HTML‑encoded form.</p>
+		              <button onclick="runStep12()" class="btn-step4" id="step12Button" disabled>▶ Run Step 12</button>
+		              <small class="note">Enabled after Step 11 succeeds</small>
+		          </div>
+			      </div>
 
       <div class="card" id="test-results"></div>
 
@@ -3615,11 +3874,19 @@ function getDashboard1Page() {
 	      let extractedBatchCode = null;
 	      let extractedPivotItemId = null;
 	      let extractedBatchTxCount = null;
-	      let flowACsrfA = null;
-	      let flowACsrfB = null;
-	      let flowAAdminSessionId = null;
+			      let flowA1CsrfA = null;
+			      let flowA2CsrfB = null;
+			      let flowA2AdminSessionId = null;
+			      let flowBEncodedCsrf = null;
+			      let flowBRawCsrf = null;
 
-      function refreshSessionInfo() {
+	      function decodeHtmlEntities(value) {
+	          const textarea = document.createElement('textarea');
+	          textarea.innerHTML = value;
+	          return textarea.value;
+	      }
+
+	      function refreshSessionInfo() {
           const token = localStorage.getItem('session_token');
           const username = localStorage.getItem('username');
           const userId = localStorage.getItem('user_id');
@@ -4019,17 +4286,17 @@ function buildLargeTransactions(count = 800, fillerLength = 5000, targetBytes = 
 	              const data = await response.json();
 	              const csrfHeader = response.headers.get('X-CSRF-TOKEN');
 	
-	              if (response.ok && data.success && csrfHeader) {
-	                  flowACsrfA = csrfHeader;
+		              if (response.ok && data.success && csrfHeader) {
+		                  flowA1CsrfA = csrfHeader;
 	
-	                  const step8Button = document.getElementById('step8Button');
-	                  if (step8Button) step8Button.disabled = false;
+		                  const step8Button = document.getElementById('step8Button');
+		                  if (step8Button) step8Button.disabled = false;
 	
-	                  showResult('success', '[OK] Step 7 completed. Captured X-CSRF-TOKEN header.', {
-	                      step: 7,
-	                      captured: { 'X-CSRF-TOKEN': csrfHeader },
-	                      response: data
-	                  });
+		                  showResult('success', '[OK] Step 7 completed. Captured X-CSRF-TOKEN header.', {
+		                      step: 7,
+		                      captured: { 'X-CSRF-TOKEN': csrfHeader },
+		                      response: data
+		                  });
 	              } else {
 	                  showResult('error', 'Step 7 failed: ' + (data.error || 'Missing X-CSRF-TOKEN header'), data);
 	              }
@@ -4038,88 +4305,187 @@ function buildLargeTransactions(count = 800, fillerLength = 5000, targetBytes = 
 	          }
 	      }
 
-	      async function runStep8() {
-	          if (!flowACsrfA) {
-	              showResult('error', 'Missing X-CSRF-TOKEN from Step 7. Run Step 7 first.');
-	              return;
-	          }
+		      async function runStep8() {
+		          if (!flowA1CsrfA) {
+		              showResult('error', 'Missing X-CSRF-TOKEN from Step 7. Run Step 7 first.');
+		              return;
+		          }
 
-	          try {
-	              showResult('info', '[ASYNC] Running Step 8: Flow A submit (header↔body + decoys)...');
+		          try {
+		              showResult('info', '[ASYNC] Running Step 8: Flow A1 confirm (header↔body)...');
 	
-	              const response = await fetch('/api/dashboard1/step8', {
-	                  method: 'POST',
-	                  headers: {
-	                      'Content-Type': 'application/json',
-	                      'X-CSRF-TOKEN': flowACsrfA
-	                  },
-	                  body: JSON.stringify({
-	                      csrf: flowACsrfA,
-	                      decoy_count: 200
-	                  })
-	              });
+		              const response = await fetch('/api/dashboard1/step8', {
+		                  method: 'POST',
+		                  headers: {
+		                      'Content-Type': 'application/json',
+		                      'X-CSRF-TOKEN': flowA1CsrfA
+		                  },
+		                  body: JSON.stringify({
+		                      csrf: flowA1CsrfA
+		                  })
+		              });
 	
-	              const data = await response.json();
+		              const data = await response.json();
 	
-	              if (response.ok && data.success) {
-	                  flowACsrfB = data && data.meta ? data.meta.csrf : null;
-	                  flowAAdminSessionId = data && data.admin ? data.admin.sessionId : null;
-	
-	                  const step9Button = document.getElementById('step9Button');
-	                  if (step9Button) step9Button.disabled = false;
-	
-	                  showResult('success', '[OK] Step 8 completed. Captured meta.csrf + admin.sessionId.', {
-	                      step: 8,
-	                      captured: {
-	                          'meta.csrf': flowACsrfB,
-	                          'admin.sessionId': flowAAdminSessionId
-	                      },
-	                      response: data
-	                  });
-	              } else {
-	                  showResult('error', 'Step 8 failed: ' + (data.error || 'Unknown error'), data);
-	              }
-	          } catch (error) {
+		              if (response.ok && data.success) {
+		                  showResult('success', '[OK] Step 8 completed. Flow A1 validated.', data);
+		              } else {
+		                  showResult('error', 'Step 8 failed: ' + (data.error || 'Unknown error'), data);
+		              }
+		          } catch (error) {
 	              showResult('error', 'Network error in Step 8: ' + error.message);
 	          }
 	      }
 
-	      async function runStep9() {
-	          if (!flowACsrfB || !flowAAdminSessionId) {
-	              showResult('error', 'Missing Flow A data. Run Step 8 first to capture meta.csrf and admin.sessionId.');
-	              return;
-	          }
+		      async function runStep9() {
+		          try {
+		              showResult('info', '[ASYNC] Running Step 9: Flow A2 start (ambiguity + decoys + scope)...');
 
-	          try {
-	              showResult('info', '[ASYNC] Running Step 9: Flow A confirm (body→header + scope)...');
-	
-	              const response = await fetch('/api/dashboard1/step9', {
-	                  method: 'POST',
-	                  headers: {
-	                      'Content-Type': 'application/json',
-	                      'X-FlowA-CSRF': flowACsrfB,
-	                      'X-Admin-SessionId': flowAAdminSessionId
-	                  },
-	                  body: JSON.stringify({
-	                      csrf: flowACsrfB
-	                  })
-	              });
-	
-	              const data = await response.json();
-	
-	              if (response.ok && data.success) {
-	                  showResult('success', '[OK] Step 9 completed. Flow A validated.', data);
-	              } else {
-	                  showResult('error', 'Step 9 failed: ' + (data.error || 'Unknown error'), data);
-	              }
-	          } catch (error) {
-	              showResult('error', 'Network error in Step 9: ' + error.message);
-	          }
-	      }
+		              const response = await fetch('/api/dashboard1/step9', {
+		                  method: 'POST',
+		                  headers: { 'Content-Type': 'application/json' },
+		                  body: JSON.stringify({ decoy_count: 200 })
+		              });
 
-	      function showResult(type, message, data = null) {
-	          const resultDiv = document.getElementById('test-results');
-	          const timestamp = new Date().toLocaleTimeString();
+		              const data = await response.json();
+
+		              if (response.ok && data.success) {
+		                  flowA2CsrfB = data && data.meta ? data.meta.csrf : null;
+		                  flowA2AdminSessionId = data && data.admin ? data.admin.sessionId : null;
+
+		                  const step10Button = document.getElementById('step10Button');
+		                  if (step10Button) step10Button.disabled = false;
+
+		                  showResult('success', '[OK] Step 9 completed. Captured meta.csrf + admin.sessionId.', {
+		                      step: 9,
+		                      captured: {
+		                          'meta.csrf': flowA2CsrfB,
+		                          'admin.sessionId': flowA2AdminSessionId
+		                      }
+		                  });
+		              } else {
+		                  showResult('error', 'Step 9 failed: ' + (data.error || 'Unknown error'), data);
+		              }
+		          } catch (error) {
+		              showResult('error', 'Network error in Step 9: ' + error.message);
+		          }
+		      }
+
+		      async function runStep10() {
+		          if (!flowA2CsrfB || !flowA2AdminSessionId) {
+		              showResult('error', 'Missing Flow A2 data. Run Step 9 first to capture meta.csrf and admin.sessionId.');
+		              return;
+		          }
+
+		          try {
+		              showResult('info', '[ASYNC] Running Step 10: Flow A2 confirm (body→header + scope)...');
+
+		              const response = await fetch('/api/dashboard1/step10', {
+		                  method: 'POST',
+		                  headers: {
+		                      'Content-Type': 'application/json',
+		                      'X-FlowA-CSRF': flowA2CsrfB,
+		                      'X-Admin-SessionId': flowA2AdminSessionId
+		                  },
+		                  body: JSON.stringify({
+		                      csrf: flowA2CsrfB
+		                  })
+		              });
+
+		              const data = await response.json();
+
+		              if (response.ok && data.success) {
+		                  showResult('success', '[OK] Step 10 completed. Flow A2 validated.', data);
+		              } else {
+		                  showResult('error', 'Step 10 failed: ' + (data.error || 'Unknown error'), data);
+		              }
+		          } catch (error) {
+		              showResult('error', 'Network error in Step 10: ' + error.message);
+		          }
+		      }
+
+		      async function runStep11() {
+		          try {
+		              showResult('info', '[ASYNC] Running Step 11: Flow B start (HTML-encoded token + noise)...');
+
+		              const response = await fetch('/api/dashboard1/step11', {
+		                  method: 'POST',
+		                  headers: { 'Content-Type': 'application/json' },
+		                  body: JSON.stringify({})
+		              });
+
+		              const html = await response.text();
+		              const match = html.match(/name="csrf_html" value="([^"]+)"/);
+		              const encoded = match ? match[1] : null;
+		              const decoded = encoded ? decodeHtmlEntities(encoded) : null;
+
+		              if (response.ok && encoded && decoded) {
+		                  flowBEncodedCsrf = encoded;
+		                  flowBRawCsrf = decoded;
+
+		                  const step12Button = document.getElementById('step12Button');
+		                  if (step12Button) step12Button.disabled = false;
+
+		                  showResult('success', '[OK] Step 11 completed. Extracted + decoded csrf_html from HTML.', {
+		                      step: 11,
+		                      extracted: {
+		                          csrf_html_encoded: encoded,
+		                          csrf_html_decoded: decoded
+		                      }
+		                  });
+		              } else {
+		                  showResult('error', 'Step 11 failed: missing csrf_html in HTML response', {
+		                      status: response.status,
+		                      html_hint: html.substring(0, 300) + '...'
+		                  });
+		              }
+		          } catch (error) {
+		              showResult('error', 'Network error in Step 11: ' + error.message);
+		          }
+		      }
+
+		      async function runStep12() {
+		          if (!flowBRawCsrf) {
+		              showResult('error', 'Missing decoded csrf_html token from Step 11. Run Step 11 first.');
+		              return;
+		          }
+
+		          try {
+		              showResult('info', '[ASYNC] Running Step 12: Flow B confirm (decoded token)...');
+
+		              const response = await fetch('/api/dashboard1/step12', {
+		                  method: 'POST',
+		                  headers: {
+		                      'Content-Type': 'application/json',
+		                      'X-HTML-CSRF': flowBRawCsrf
+		                  },
+		                  body: JSON.stringify({
+		                      csrf: flowBRawCsrf
+		                  })
+		              });
+
+		              const data = await response.json();
+
+		              if (response.ok && data.success) {
+		                  showResult('success', '[OK] Step 12 completed. Flow B validated.', {
+		                      response: data,
+		                      used: {
+		                          header: flowBRawCsrf,
+		                          body: flowBRawCsrf,
+		                          encoded_example: flowBEncodedCsrf
+		                      }
+		                  });
+		              } else {
+		                  showResult('error', 'Step 11 failed: ' + (data.error || 'Unknown error'), data);
+		              }
+		          } catch (error) {
+		              showResult('error', 'Network error in Step 12: ' + error.message);
+		          }
+		      }
+
+		      function showResult(type, message, data = null) {
+		          const resultDiv = document.getElementById('test-results');
+		          const timestamp = new Date().toLocaleTimeString();
 
           let html = 
               '<div class="' + type + '">' +

@@ -24,17 +24,17 @@ Legend:
 | Basic | Short/small dynamic value | P1 | S | Med | ✅ Done | Helps avoid missing subtle dynamics |
 | Size | Large dynamic value (e.g. ViewState ~400KB) | P0 | S–M | High | ✅ Done | Chunking/limits/timeouts |
 | Size | Large request + response | P1 | M | Med–High | ✅ Done | End-to-end payload handling |
-| Volume | High token density (50–200) | P1 | M | High | ✅ Done | Dashboard1 Flow A Step 8 (200 decoys; only 1–2 reused) |
-| Ambiguity | Multiple similar tokens | P0 | S | High | ✅ Done | Dashboard1 Flow A Step 8 (real token is `meta.csrf`) |
-| Ambiguity | Same token name, different scope | P1 | S | Med–High | ✅ Done | Dashboard1 Flow A Step 8–9 (`sessionId` vs `admin.sessionId`) |
-| Ambiguity | Decoy tokens / traps | P1 | S | High | ✅ Done | Dashboard1 Flow A Step 7–8 (body decoy + token traps) |
-| Headers | Header-only tokens (cookies/headers) | P0 | S | High | ✅ Done | Dashboard1 Flow A Step 7 (`X-CSRF-TOKEN` response header) |
-| Cookies | Multi cookies + attribute reorder | P1 | S | Med | ✅ Done | Dashboard1 Flow A Step 7 (multiple Set-Cookie headers + attribute reorder) |
-| Mutation | Token changes mid-journey | P1 | M | High | ✅ Done | Dashboard1 Flow A Step 7→9 (tokenA → tokenB) |
+| Volume | High token density (50–200) | P1 | M | High | ✅ Done | Dashboard1 Flow A2 Step 9 (200 decoys; only 1–2 reused) |
+| Ambiguity | Multiple similar tokens | P0 | S | High | ✅ Done | Dashboard1 Flow A2 Step 9 (real token is `meta.csrf`) |
+| Ambiguity | Same token name, different scope | P1 | S | Med–High | ✅ Done | Dashboard1 Flow A2 Step 9→10 (`sessionId` vs `admin.sessionId`) |
+| Ambiguity | Decoy tokens / traps | P1 | S | High | ✅ Done | Dashboard1 Flow A1 Step 7 (body decoy) + Flow A2 Step 9 (200 decoys) |
+| Headers | Header-only tokens (cookies/headers) | P0 | S | High | ✅ Done | Dashboard1 Flow A1 Step 7 (`X-CSRF-TOKEN` response header) |
+| Cookies | Multi cookies + attribute reorder | P1 | S | Med | ✅ Done | Dashboard1 Flow A1 Step 7 (multiple Set-Cookie headers + attribute reorder) |
+| Mutation | Token changes mid-journey | P1 | M | High | ⏳ To do | Split into a dedicated pair/flow to keep other tests independent |
 | Encoding | Line feeds in regex | P0 | S | High | ✅ Done | Quick win; breaks naive regex |
-| Encoding | HTML-encoded vs raw | P1 | S | Med–High | ⏳ To do | Common mismatch in practice |
-| Noise | High-entropy but static | P0 | S | High | ⏳ To do | Prevents dangerous over-correlation |
-| Noise | Uncorrelatable random data | P1 | S | Med | ⏳ To do | Strengthens “do nothing” correctness |
+| Encoding | HTML-encoded vs raw | P1 | S | Med–High | ✅ Done | Dashboard1 Flow B Step 11→12 (HTML entity decoding required) |
+| Noise | High-entropy but static | P0 | S | High | ✅ Done | Dashboard1 Flow B Step 11 (static high-entropy fields, never reused) |
+| Noise | Uncorrelatable random data | P1 | S | Med | ✅ Done | Dashboard1 Flow B Step 11 (per-request UUID noise, never reused) |
 | Multipart | multipart/form-data | P2 | M | Med | ⏳ Later | Useful, but more effort |
 | Composite | Split/concatenated token | P2 | M | Med | ⏳ Later | Needs clearer expected behaviour |
 | Binary | Base64 tokens / wrapped base64 | P2 | M | Med | ⏳ Later | Useful if you expect uploads/blobs |
@@ -350,26 +350,54 @@ Legend:
 
 ### 12.3 Minimal endpoint set (recommended)
 
-#### Flow A — “Headers + Cookies + Scope” (covers multiple P0/P1)
-**Purpose:** nail modern web realities (headers/cookies) plus ambiguity.
+#### Flow A1 — “Headers + Cookies” (covers multiple P0/P1)
+**Purpose:** validate header-only token extraction + cookie persistence without blocking other cases.
 
-Endpoints (implemented on **Dashboard1** as Steps 7–9):
-1. `POST /api/dashboard1/step7` (Flow A start)
+Endpoints (implemented on **Dashboard1** as Steps 7–8):
+1. `POST /api/dashboard1/step7` (Flow A1 start)
    - Returns **Set-Cookie**: `flowa_session=<id>` (+ extra cookies with attribute reordering)
    - Returns header **X-CSRF-TOKEN: <tokenA>**
    - Response body contains a **decoy** `csrf` value as well
-2. `POST /api/dashboard1/step8` (Flow A submit)
+2. `POST /api/dashboard1/step8` (Flow A1 confirm)
    - Requires **cookie flowa_session** + **header X-CSRF-TOKEN=<tokenA>**
    - Requires body: `{ "csrf": "<tokenA>" }` (**header → body**)
-   - Returns JSON:
+
+---
+
+#### Flow A2 — “Ambiguity + Decoys + Scope” (covers multiple P0/P1)
+**Purpose:** high token density + ambiguity + scope, independent from header-only extraction.
+
+Endpoints (implemented on **Dashboard1** as Steps 9–10):
+1. `POST /api/dashboard1/step9` (Flow A2 start)
+   - Returns **Set-Cookie**: `flowa2_session=<id>`
+   - Returns JSON with:
      - multiple similar candidates: `csrf`, `previous_csrf`, `meta.csrf` (**real token is `meta.csrf`**)
      - scope confusion: `sessionId` vs `admin.sessionId`
      - high token density: `decoys` (50–200, default 200)
-3. `POST /api/dashboard1/step9` (Flow A confirm)
-   - Requires **cookie flowa_session**
+2. `POST /api/dashboard1/step10` (Flow A2 confirm)
+   - Requires **cookie flowa2_session**
    - Requires header **X-FlowA-CSRF=<meta.csrf>** (**body → header**)
    - Requires body **csrf=<meta.csrf>** (**body → body**)
    - Requires header **X-Admin-SessionId=<admin.sessionId>** (**body → header, scope test**)
+
+---
+
+#### Flow B — “Encoding + Noise” (covers multiple P0/P1)
+**Purpose:** validate HTML decoding needs and “do nothing” false-positive control.
+
+Endpoints (implemented on **Dashboard1** as Steps 11–12):
+1. `POST /api/dashboard1/step11` (Flow B start)
+   - Returns **Set-Cookie**: `flowb_session=<id>`
+   - Returns **HTML** (text/html) containing:
+     - real token: hidden input `csrf_html="<HTML-encoded token>"`
+     - decoy token: hidden input `csrf_decoy="<HTML-encoded token>"`
+     - static high-entropy noise fields (`static_noise_###`) (never reused)
+     - per-request UUID noise fields (`uuid_noise_###`) (never reused)
+2. `POST /api/dashboard1/step12` (Flow B confirm)
+   - Requires **cookie flowb_session**
+   - Requires header **X-HTML-CSRF=<decoded token>** (**body → header**)
+   - Requires body **csrf=<decoded token>** (**body → body**)
+   - Rejects the HTML-encoded form (e.g. values containing `&amp;`)
 
 ---
 
