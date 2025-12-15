@@ -356,6 +356,33 @@ Authorization: Bearer {session_token}
 }
 ```
 
+### Dashboard1 Edge Case Endpoints
+
+These endpoints back the interactive page at `/dashboard1` and are designed to validate correlation tooling against modern header/cookie flows.
+
+#### POST `/api/dashboard1/step7` (Flow A start: headers + cookies)
+- Returns `Set-Cookie: flowa_session=...` (HttpOnly session cookie)
+- Returns header `X-CSRF-TOKEN: tok_...` (real tokenA)
+- Response body contains a decoy `csrf` value
+
+#### POST `/api/dashboard1/step8` (Flow A submit: header↔body + ambiguity + decoys)
+**Requires**:
+- Cookie: `flowa_session=...`
+- Header: `X-CSRF-TOKEN: <tokenA>`
+- Body: `{ "csrf": "<tokenA>", "decoy_count": 200 }` (`decoy_count` optional, 50–200)
+
+**Returns**:
+- Ambiguity: `csrf` (decoy), `previous_csrf` (decoy), `meta.csrf` (real tokenB)
+- Scope confusion: `sessionId` vs `admin.sessionId`
+- High token density: `decoys` object (default 200)
+
+#### POST `/api/dashboard1/step9` (Flow A confirm: body→header + scope)
+**Requires**:
+- Cookie: `flowa_session=...`
+- Header: `X-FlowA-CSRF: <meta.csrf>`
+- Header: `X-Admin-SessionId: <admin.sessionId>`
+- Body: `{ "csrf": "<meta.csrf>" }`
+
 ## HTML Pages
 
 ### Home Page (`/`)
@@ -387,6 +414,11 @@ Authorization: Bearer {session_token}
 - Session information display
 - API endpoint testing tools
 - Logout functionality
+
+### Dashboard1 Page (`/dashboard1`)
+- Edge-case test page with Steps 1–9
+- Includes Flow A (headers + cookies + ambiguity + 200 decoys)
+- Designed for network capture + token replay in JMeter/Locust/K6
 
 ### Checkout Page (`/checkout`)
 - Complete checkout process
@@ -432,7 +464,8 @@ All endpoints include comprehensive CORS headers:
 ```
 Access-Control-Allow-Origin: *
 Access-Control-Allow-Methods: GET, POST, OPTIONS
-Access-Control-Allow-Headers: Content-Type, Authorization
+Access-Control-Allow-Headers: Content-Type, Authorization, X-CSRF-TOKEN, X-FlowA-CSRF, X-Admin-SessionId
+Access-Control-Expose-Headers: X-CSRF-TOKEN, X-FlowA-CSRF, X-Admin-SessionId, ...
 ```
 
 ## Error Handling

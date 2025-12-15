@@ -24,13 +24,13 @@ Legend:
 | Basic | Short/small dynamic value | P1 | S | Med | ✅ Done | Helps avoid missing subtle dynamics |
 | Size | Large dynamic value (e.g. ViewState ~400KB) | P0 | S–M | High | ✅ Done | Chunking/limits/timeouts |
 | Size | Large request + response | P1 | M | Med–High | ✅ Done | End-to-end payload handling |
-| Volume | High token density (50–200) | P1 | M | High | ⏳ To do | Ranking + confidence + false positives |
-| Ambiguity | Multiple similar tokens | P0 | S | High | ⏳ To do | Prevents wrong-match extraction |
-| Ambiguity | Same token name, different scope | P1 | S | Med–High | ⏳ To do | Tests context awareness |
-| Ambiguity | Decoy tokens / traps | P1 | S | High | ⏳ To do | Validates confidence scoring |
-| Headers | Header-only tokens (cookies/headers) | P0 | S | High | ⏳ To do | Essential modern-web behaviour |
-| Cookies | Multi cookies + attribute reorder | P1 | S | Med | ⏳ To do | Prevents brittle parsing |
-| Mutation | Token changes mid-journey | P1 | M | High | ⏳ To do | Auth/nonce flows |
+| Volume | High token density (50–200) | P1 | M | High | ✅ Done | Dashboard1 Flow A Step 8 (200 decoys; only 1–2 reused) |
+| Ambiguity | Multiple similar tokens | P0 | S | High | ✅ Done | Dashboard1 Flow A Step 8 (real token is `meta.csrf`) |
+| Ambiguity | Same token name, different scope | P1 | S | Med–High | ✅ Done | Dashboard1 Flow A Step 8–9 (`sessionId` vs `admin.sessionId`) |
+| Ambiguity | Decoy tokens / traps | P1 | S | High | ✅ Done | Dashboard1 Flow A Step 7–8 (body decoy + token traps) |
+| Headers | Header-only tokens (cookies/headers) | P0 | S | High | ✅ Done | Dashboard1 Flow A Step 7 (`X-CSRF-TOKEN` response header) |
+| Cookies | Multi cookies + attribute reorder | P1 | S | Med | ✅ Done | Dashboard1 Flow A Step 7 (multiple Set-Cookie headers + attribute reorder) |
+| Mutation | Token changes mid-journey | P1 | M | High | ✅ Done | Dashboard1 Flow A Step 7→9 (tokenA → tokenB) |
 | Encoding | Line feeds in regex | P0 | S | High | ✅ Done | Quick win; breaks naive regex |
 | Encoding | HTML-encoded vs raw | P1 | S | Med–High | ⏳ To do | Common mismatch in practice |
 | Noise | High-entropy but static | P0 | S | High | ⏳ To do | Prevents dangerous over-correlation |
@@ -353,18 +353,23 @@ Legend:
 #### Flow A — “Headers + Cookies + Scope” (covers multiple P0/P1)
 **Purpose:** nail modern web realities (headers/cookies) plus ambiguity.
 
-Endpoints:
-1. `GET /flowA/start`
-   - Returns **Set-Cookie**: `session=<id>`
-   - Returns header **X-CSRF-TOKEN: <tokenA>`
+Endpoints (implemented on **Dashboard1** as Steps 7–9):
+1. `POST /api/dashboard1/step7` (Flow A start)
+   - Returns **Set-Cookie**: `flowa_session=<id>` (+ extra cookies with attribute reordering)
+   - Returns header **X-CSRF-TOKEN: <tokenA>**
    - Response body contains a **decoy** `csrf` value as well
-2. `POST /flowA/submit`
-   - Requires **cookie session** + **header csrf tokenA**
+2. `POST /api/dashboard1/step8` (Flow A submit)
+   - Requires **cookie flowa_session** + **header X-CSRF-TOKEN=<tokenA>**
+   - Requires body: `{ "csrf": "<tokenA>" }` (**header → body**)
    - Returns JSON:
-     - multiple similar tokens: `csrf`, `previous_csrf`, `meta.csrf`
-     - plus `admin.sessionId` vs `sessionId` (scope)
-3. `POST /flowA/confirm`
-   - Must use the **correct** token from step 2
+     - multiple similar candidates: `csrf`, `previous_csrf`, `meta.csrf` (**real token is `meta.csrf`**)
+     - scope confusion: `sessionId` vs `admin.sessionId`
+     - high token density: `decoys` (50–200, default 200)
+3. `POST /api/dashboard1/step9` (Flow A confirm)
+   - Requires **cookie flowa_session**
+   - Requires header **X-FlowA-CSRF=<meta.csrf>** (**body → header**)
+   - Requires body **csrf=<meta.csrf>** (**body → body**)
+   - Requires header **X-Admin-SessionId=<admin.sessionId>** (**body → header, scope test**)
 
 ---
 
@@ -382,4 +387,3 @@ Each case should validate:
 **Document Version:** 1.1  
 **Owner:** LoadMagic.ai  
 **Intended Audience:** Dev, QA, AI Agent Authors
-
