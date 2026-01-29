@@ -1669,9 +1669,9 @@ function getLoginPage() {
                   localStorage.setItem('correlation_id', data.correlation_id);
                   localStorage.setItem('username', data.username);
                   
-                  document.getElementById('result').innerHTML = 
+                  document.getElementById('result').innerHTML =
                       '<h3>[OK] Login Successful!</h3>' +
-                      '<div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 10px 0;">' +
+                      '<div style="background: #0f2720; padding: 15px; border-radius: 10px; margin: 10px 0; border: 1px solid rgba(40, 167, 69, 0.3);">' +
                           '<p><strong>Session Token:</strong> <code>' + data.session_token + '</code></p>' +
                           '<p><strong>Session ID:</strong> <code>' + data.session_id + '</code></p>' +
                           '<p><strong>CSRF Token:</strong> <code>' + data.csrf_token + '</code></p>' +
@@ -1689,11 +1689,11 @@ function getLoginPage() {
                       '</div>';
               } else {
                   document.getElementById('result').innerHTML = 
-                      '<div style="background: #f8d7da; color: #721c24; padding: 10px; border-radius: 3px;"><h3>[ERROR] Login Failed</h3><pre>' + JSON.stringify(data, null, 2) + '</pre></div>';
+                      '<div style="background: #2a1215; border: 1px solid rgba(220, 53, 69, 0.3); padding: 10px; border-radius: 3px;"><h3>[ERROR] Login Failed</h3><pre>' + JSON.stringify(data, null, 2) + '</pre></div>';
               }
           } catch (error) {
               document.getElementById('result').innerHTML = 
-                  '<div style="background: #f8d7da; color: #721c24; padding: 10px; border-radius: 3px;"><h3>[ERROR] Error</h3><pre>' + error.message + '</pre></div>';
+                  '<div style="background: #2a1215; border: 1px solid rgba(220, 53, 69, 0.3); padding: 10px; border-radius: 3px;"><h3>[ERROR] Error</h3><pre>' + error.message + '</pre></div>';
           }
       }
       
@@ -2302,8 +2302,8 @@ function getCheckoutPage() {
               const result = await response.json();
               
               if (result.success) {
-                  document.getElementById('checkout-result').innerHTML = 
-                      '<div style="background: #d4edda; color: #155724; padding: 20px; border-radius: 5px; margin: 20px 0;">' +
+                  document.getElementById('checkout-result').innerHTML =
+                      '<div style="background: #0f2720; padding: 20px; border-radius: 10px; margin: 20px 0; border: 1px solid rgba(40, 167, 69, 0.3);">' +
                           '<h3>[SPARKLE] Checkout Successful!</h3>' +
                           '<p><strong>Order Token:</strong> ' + result.order_token + '</p>' +
                           '<p><strong>Confirmation Number:</strong> ' + result.confirmation_number + '</p>' +
@@ -2319,7 +2319,7 @@ function getCheckoutPage() {
                       '</div>';
               } else {
                   document.getElementById('checkout-result').innerHTML = 
-                      '<div style="background: #f8d7da; color: #721c24; padding: 15px; border-radius: 5px;">' +
+                      '<div style="background: #2a1215; border: 1px solid rgba(220, 53, 69, 0.3); padding: 15px; border-radius: 5px;">' +
                           '<h3>[ERROR] Checkout Failed</h3>' +
                           '<p><strong>Error:</strong> ' + result.error + '</p>' +
                           '<p><strong>Message:</strong> ' + result.message + '</p>' +
@@ -2327,7 +2327,7 @@ function getCheckoutPage() {
               }
           } catch (error) {
               document.getElementById('checkout-result').innerHTML = 
-                  '<div style="background: #f8d7da; color: #721c24; padding: 15px; border-radius: 5px;">' +
+                  '<div style="background: #2a1215; border: 1px solid rgba(220, 53, 69, 0.3); padding: 15px; border-radius: 5px;">' +
                       '<h3>[ERROR] Network Error</h3>' +
                       '<p>' + error.message + '</p>' +
                   '</div>';
