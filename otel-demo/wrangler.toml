@@ -1,0 +1,16 @@
+name = "otel-demo"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+assets = { directory = "./static", binding = "ASSETS" }
+workers_dev = true
+
+# Bind the D1 database
+[[d1_databases]]
+binding = "DB"
+database_name = "otel-demo"
+database_id = "743aa9d4-9d52-44ca-a118-1fa28f1e2870"
+
+# Custom domain configuration for otel-demo.loadmagic.ai
+[[routes]]
+pattern = "otel-demo.loadmagic.ai"
+custom_domain = true
