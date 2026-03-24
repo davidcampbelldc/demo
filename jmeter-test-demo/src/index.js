@@ -8,8 +8,8 @@ export default {
 	      const corsHeaders = {
 	        'Access-Control-Allow-Origin': '*',
 	        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-	        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-CSRF-TOKEN, X-FlowA-CSRF, X-Admin-SessionId, X-HTML-CSRF',
-	        'Access-Control-Expose-Headers': 'X-Session-Token, X-Session-Id, X-CSRF-Token, X-Correlation-Id, X-User-Id, X-ShortID, X-FinalID, X-Timestamp, X-CSRF-TOKEN, X-FlowA-CSRF, X-Admin-SessionId',
+	        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-CSRF-TOKEN, X-FlowA-CSRF, X-Admin-SessionId, X-HTML-CSRF, X-SWEC-Counter, X-Delivery-Quote',
+	        'Access-Control-Expose-Headers': 'X-Session-Token, X-Session-Id, X-CSRF-Token, X-Correlation-Id, X-User-Id, X-ShortID, X-FinalID, X-Timestamp, X-CSRF-TOKEN, X-FlowA-CSRF, X-Admin-SessionId, X-Visitor-Id, X-Journey-Id, X-Auth-Level, X-Customer-Context, X-Basket-Id, X-Basket-Version, X-Checkout-Flow-Id, X-Flow-Recovered, X-Delivery-Quote, X-Payment-Nonce, X-Pricing-Sig, X-SWEC-Counter',
 	      };
   
       // Handle OPTIONS requests for CORS
@@ -133,6 +133,45 @@ export default {
 
 	          case path === '/api/dashboard1/step12' && method === 'POST':
 	            return await handleDashboard1Step12(request, env, corsHeaders);
+
+          // Nasty Flow routes
+          case path === '/nasty' && method === 'GET':
+            return new Response(getNastyFlowPage(), {
+              headers: { ...corsHeaders, 'Content-Type': 'text/html' }
+            });
+
+          case path === '/api/nasty/home' && method === 'POST':
+            return await handleNastyHome(request, env, corsHeaders);
+
+          case path === '/api/nasty/login-page' && method === 'POST':
+            return await handleNastyLoginPage(request, env, corsHeaders);
+
+          case path === '/api/nasty/login-submit' && method === 'POST':
+            return await handleNastyLoginSubmit(request, env, corsHeaders);
+
+          case path === '/api/nasty/account-summary' && method === 'POST':
+            return await handleNastyAccountSummary(request, env, corsHeaders);
+
+          case path === '/api/nasty/product' && method === 'POST':
+            return await handleNastyProduct(request, env, corsHeaders);
+
+          case path === '/api/nasty/basket-add' && method === 'POST':
+            return await handleNastyBasketAdd(request, env, corsHeaders);
+
+          case path === '/api/nasty/basket' && method === 'POST':
+            return await handleNastyBasket(request, env, corsHeaders);
+
+          case path === '/api/nasty/checkout-start' && method === 'POST':
+            return await handleNastyCheckoutStart(request, env, corsHeaders);
+
+          case path === '/api/nasty/delivery-options' && method === 'POST':
+            return await handleNastyDeliveryOptions(request, env, corsHeaders);
+
+          case path === '/api/nasty/payment' && method === 'POST':
+            return await handleNastyPayment(request, env, corsHeaders);
+
+          case path === '/api/nasty/confirm-order' && method === 'POST':
+            return await handleNastyConfirmOrder(request, env, corsHeaders);
 
 	          case path === '/favicon.ico' && method === 'GET':
 	            if (!env.ASSETS) {
@@ -2569,6 +2608,17 @@ async function readAccessGateBody(request) {
 	  return `sess_${hash.slice(0, 14)}`;
 	}
 
+	async function deriveNastyToken(nastySessionId, purpose) {
+	  const hash = await sha256Hex(`nasty_v1|${purpose}|${nastySessionId}`);
+	  return `ntok_${hash.slice(0, 32)}`;
+	}
+
+	async function deriveNastyCsrf(nastySessionId) {
+	  // Generates a token containing & characters that will be HTML-entity-encoded
+	  const hash = await sha256Hex(`nasty_csrf|${nastySessionId}`);
+	  return `ntok_${hash.slice(0, 12)}&sig=${hash.slice(12, 24)}&v=${hash.slice(24, 32)}`;
+	}
+
 	async function deriveFlowBToken(flowbSession, purpose) {
 	  const hash = await sha256Hex(`flowb_v1|${purpose}|${flowbSession}`);
 	  const left = hash.slice(0, 16);
@@ -2920,6 +2970,7 @@ function renderHeader(title, subtitle = '') {
         <a href="/login">Login</a>
         <a href="/dashboard">Dashboard</a>
         <a href="/dashboard1">Dashboard1</a>
+        <a href="/nasty">Nasty Flow</a>
       </nav>
     </header>
   `;
@@ -3026,6 +3077,7 @@ function getHomePage() {
               <li><a href="/checkout">Checkout Process</a> (session required)</li>
               <li><a href="/dashboard">Authenticated Dashboard</a> (session required)</li>
               <li><a href="/dashboard1">Dashboard1</a>  (short data edge case test)</li>
+              <li><a href="/nasty">Nasty Flow</a> (cascading silent failure checkout)</li>
           </ul>
       </div>
       
@@ -4995,8 +5047,1556 @@ function getProductsPage() {
           localStorage.removeItem('next_step_token');
           checkLoginStatus();
       }
-      
+
       </script>
   </body>
   </html>`;
   }
+
+// ============================================================================
+// NASTY FLOW — Cascading Silent Failure Checkout Demo
+// ============================================================================
+
+// T1: Home — Mixed Extraction Types
+async function handleNastyHome(request, env, corsHeaders) {
+  const { session_token, user_id } = await request.json();
+
+  if (!session_token || !user_id) {
+    return new Response(JSON.stringify({
+      error: 'Missing required fields',
+      required: ['session_token', 'user_id'],
+      hint: 'Login via /api/login first to get a session_token'
+    }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  const user = await env.DB.prepare('SELECT id FROM users WHERE session_token = ? AND id = ?')
+    .bind(session_token, user_id).first();
+  if (!user) {
+    return new Response(JSON.stringify({ error: 'Invalid session' }), {
+      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  const nastySessionId = 'nsess_' + generateToken();
+  // Short 4-char visitorId (echoes Dashboard1 short-ID challenge)
+  const visitorId = Math.random().toString(36).substr(2, 4);
+  const journeyId = 'jrn_' + generateToken();
+
+  await env.DB.prepare(
+    'INSERT INTO nasty_flow_sessions (user_id, nasty_session_id, visitor_id, journey_id) VALUES (?, ?, ?, ?)'
+  ).bind(user.id, nastySessionId, visitorId, journeyId).run();
+
+  return new Response(JSON.stringify({
+    success: true,
+    page: 'home',
+    visitorId: visitorId,
+    nastySessionId: nastySessionId,
+    metadata: {
+      pageLoadId: generateToken(),
+      serverTime: new Date().toISOString(),
+      tracking: {
+        journeyId: journeyId,
+        source: 'direct',
+        campaign: null
+      }
+    }
+  }), {
+    status: 200,
+    headers: {
+      ...corsHeaders,
+      'Content-Type': 'application/json',
+      'X-Visitor-Id': visitorId,
+      'X-Journey-Id': journeyId,
+      'Set-Cookie': `nasty_session=${nastySessionId}; Path=/; HttpOnly; SameSite=Lax`
+    }
+  });
+}
+
+// T2: Login Page — HTML + Entity Encoding + Decoys + 30s Expiry
+async function handleNastyLoginPage(request, env, corsHeaders) {
+  const { nasty_session_id } = await request.json();
+  const cookieHeader = request.headers.get('Cookie');
+  const cookieSession = getCookieValue(cookieHeader, 'nasty_session');
+
+  if (!nasty_session_id || !cookieSession) {
+    return new Response(JSON.stringify({
+      error: 'Missing nasty_session_id or nasty_session cookie',
+      hint: 'Run T1 (Home) first'
+    }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  const session = await env.DB.prepare(
+    'SELECT * FROM nasty_flow_sessions WHERE nasty_session_id = ?'
+  ).bind(nasty_session_id).first();
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Invalid nasty session' }), {
+      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  // Generate tokens
+  const csrfToken = await deriveNastyCsrf(nasty_session_id);
+  const authFlowId = 'aflow_' + generateToken();
+  const pageInstanceId = 'pinst_' + generateToken();
+  const csrfCreatedAt = new Date().toISOString();
+
+  // Store in DB
+  await env.DB.prepare(
+    'UPDATE nasty_flow_sessions SET csrf_token = ?, auth_flow_id = ?, page_instance_id = ?, csrf_token_created_at = ? WHERE nasty_session_id = ?'
+  ).bind(csrfToken, authFlowId, pageInstanceId, csrfCreatedAt, nasty_session_id).run();
+
+  // HTML-entity-encode the CSRF token (contains & characters)
+  const encodedCsrf = escapeHtml(csrfToken);
+
+  // Generate 200 decoy hidden inputs
+  const decoyInputs = [];
+  for (let i = 1; i <= 200; i++) {
+    const num = String(i).padStart(3, '0');
+    decoyInputs.push(`    <input type="hidden" name="decoy_${num}" value="${escapeHtml(generateToken())}" />`);
+  }
+
+  // Decoy CSRF in the <script> block (NOT the real one)
+  const decoyCsrfMeta = await deriveNastyToken(nasty_session_id, 'decoy_csrf');
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head><title>Login - LoadMagic Demo</title></head>
+<body>
+  <h1>Login</h1>
+  <form id="loginForm" method="POST" action="/api/nasty/login-submit">
+    <input type="hidden" name="csrf_token" value="${encodedCsrf}" />
+    <input type="hidden" name="auth_flow_id" value="${authFlowId}" />
+${decoyInputs.join('\n')}
+    <div>
+      <label for="username">Username:</label>
+      <input type="text" id="username" name="username" value="testuser1" />
+    </div>
+    <div>
+      <label for="password">Password:</label>
+      <input type="password" id="password" name="password" value="123" />
+    </div>
+    <button type="submit">Sign In</button>
+  </form>
+  <script>
+    window.__PAGE_STATE__ = {
+      pageInstanceId: "${pageInstanceId}",
+      formConfig: { method: "POST", action: "/api/nasty/login-submit" },
+      csrfMeta: "${decoyCsrfMeta}"
+    };
+  </script>
+</body>
+</html>`;
+
+  return new Response(html, {
+    status: 200,
+    headers: { ...corsHeaders, 'Content-Type': 'text/html' }
+  });
+}
+
+// T3: Login Submit — Silent Partial Auth (The Trap)
+async function handleNastyLoginSubmit(request, env, corsHeaders) {
+  const body = await request.json();
+  const { csrf_token, auth_flow_id, page_instance_id, username, password, nasty_session_id } = body;
+  const cookieHeader = request.headers.get('Cookie');
+  const cookieSession = getCookieValue(cookieHeader, 'nasty_session');
+
+  if (!nasty_session_id || !cookieSession) {
+    return new Response(JSON.stringify({
+      error: 'Missing session', hint: 'Run T1 and T2 first'
+    }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  const session = await env.DB.prepare(
+    'SELECT * FROM nasty_flow_sessions WHERE nasty_session_id = ?'
+  ).bind(nasty_session_id).first();
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Invalid nasty session' }), {
+      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  // Validate credentials
+  const user = await env.DB.prepare('SELECT id, username, email FROM users WHERE username = ? AND password_hash = ?')
+    .bind(username || '', 'hash_' + (password || '')).first();
+
+  // Check all conditions for full auth
+  let authLevel = 'full';
+  let degradeReason = null;
+
+  // Check CSRF — reject if still HTML-encoded
+  if (!csrf_token) {
+    authLevel = 'guest-upgraded';
+    degradeReason = 'missing csrf_token';
+  } else if (looksHtmlEntityEncoded(csrf_token)) {
+    authLevel = 'guest-upgraded';
+    degradeReason = 'csrf_token still HTML-encoded';
+  } else if (csrf_token !== session.csrf_token) {
+    authLevel = 'guest-upgraded';
+    degradeReason = 'csrf_token mismatch';
+  }
+
+  // Check CSRF expiry (30 seconds)
+  if (authLevel === 'full' && session.csrf_token_created_at) {
+    const csrfAge = Date.now() - new Date(session.csrf_token_created_at).getTime();
+    if (csrfAge > 30000) {
+      authLevel = 'guest-upgraded';
+      degradeReason = 'csrf_token expired (30s limit)';
+    }
+  }
+
+  // Check auth_flow_id
+  if (authLevel === 'full' && auth_flow_id !== session.auth_flow_id) {
+    authLevel = 'guest-upgraded';
+    degradeReason = 'auth_flow_id mismatch';
+  }
+
+  // Check page_instance_id
+  if (authLevel === 'full' && page_instance_id !== session.page_instance_id) {
+    authLevel = 'guest-upgraded';
+    degradeReason = 'page_instance_id mismatch';
+  }
+
+  // Check credentials
+  if (!user) {
+    authLevel = 'guest-upgraded';
+    degradeReason = degradeReason || 'invalid credentials';
+  }
+
+  // Generate tokens based on auth level
+  const accessToken = authLevel === 'full'
+    ? await deriveNastyToken(nasty_session_id, 'access_token_full')
+    : await deriveNastyToken(nasty_session_id, 'access_token_guest');
+  const customerContextId = authLevel === 'full'
+    ? 'cctx_' + generateToken()
+    : null;
+
+  // Update session
+  await env.DB.prepare(
+    'UPDATE nasty_flow_sessions SET auth_level = ?, customer_context_id = ?, access_token = ? WHERE nasty_session_id = ?'
+  ).bind(authLevel, customerContextId, accessToken, nasty_session_id).run();
+
+  const responseHeaders = {
+    ...corsHeaders,
+    'Content-Type': 'application/json',
+    'X-Auth-Level': authLevel
+  };
+
+  // Only set auth cookie and customer context header on full auth
+  if (authLevel === 'full') {
+    const authCookieVal = await deriveNastyToken(nasty_session_id, 'auth_cookie');
+    responseHeaders['Set-Cookie'] = `nasty_auth=${authCookieVal}; Path=/; HttpOnly; SameSite=Lax`;
+    responseHeaders['X-Customer-Context'] = customerContextId;
+  }
+
+  const responseBody = {
+    success: true,
+    message: `Welcome back, ${user ? user.username : username}!`,
+    user: {
+      username: user ? user.username : username,
+      displayName: user ? user.username : 'Guest User',
+      authLevel: authLevel
+    },
+    session: {
+      accessToken: accessToken,
+      refreshToken: await deriveNastyToken(nasty_session_id, authLevel === 'full' ? 'refresh_full' : 'refresh_guest'),
+      expiresIn: authLevel === 'full' ? 3600 : 900
+    },
+    metadata: {
+      loginMethod: authLevel === 'full' ? 'credentials' : 'fallback',
+      reauthRecommended: authLevel !== 'full',
+      mfaStatus: authLevel === 'full' ? 'not_required' : 'skipped'
+    }
+  };
+
+  // Only include customerContextId on full auth
+  if (authLevel === 'full') {
+    responseBody.user.customerContextId = customerContextId;
+  }
+
+  return new Response(JSON.stringify(responseBody), {
+    status: 200,
+    headers: responseHeaders
+  });
+}
+
+// T4: Account Summary — SWEC Counter + Aura Fragments
+async function handleNastyAccountSummary(request, env, corsHeaders) {
+  const body = await request.json();
+  const { nasty_session_id, access_token } = body;
+  const cookieHeader = request.headers.get('Cookie');
+  const cookieSession = getCookieValue(cookieHeader, 'nasty_session');
+  const incomingSwec = request.headers.get('X-SWEC-Counter');
+
+  if (!nasty_session_id || !access_token) {
+    return new Response(JSON.stringify({
+      error: 'Missing required fields', required: ['nasty_session_id', 'access_token']
+    }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  const session = await env.DB.prepare(
+    'SELECT * FROM nasty_flow_sessions WHERE nasty_session_id = ? AND access_token = ?'
+  ).bind(nasty_session_id, access_token).first();
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Invalid session or access_token' }), {
+      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  // SWEC counter validation (Siebel-style strict sequencing)
+  const expectedSwec = session.swec_counter + 1;
+  let swecValid = true;
+  if (incomingSwec !== null && incomingSwec !== undefined && String(incomingSwec) !== String(expectedSwec)) {
+    swecValid = false;
+  }
+
+  // Increment counter
+  const newSwec = expectedSwec;
+
+  // Generate aura context fragments (client must assemble for T8)
+  const auraFwuid = await sha256Hex(`aura_fwuid|${nasty_session_id}`);
+  const fwuid = auraFwuid.slice(0, 12);
+  const auraMode = 'PROD';
+  const auraApp = 'store:main';
+
+  await env.DB.prepare(
+    'UPDATE nasty_flow_sessions SET swec_counter = ?, aura_fwuid = ?, aura_mode = ?, aura_app = ? WHERE nasty_session_id = ?'
+  ).bind(newSwec, fwuid, auraMode, auraApp, nasty_session_id).run();
+
+  const isFullAuth = session.auth_level === 'full';
+
+  return new Response(JSON.stringify({
+    authenticated: true,
+    authLevel: session.auth_level,
+    account: {
+      customerContextId: session.customer_context_id || undefined,
+      loyaltyTier: isFullAuth ? 'gold' : 'none',
+      savedAddresses: isFullAuth ? 2 : 0,
+      savedPaymentMethods: isFullAuth ? 1 : 0
+    },
+    swecCounter: newSwec,
+    swecValid: swecValid,
+    auraContext: {
+      fwuid: fwuid,
+      mode: auraMode,
+      app: auraApp
+    }
+  }), {
+    status: 200,
+    headers: {
+      ...corsHeaders,
+      'Content-Type': 'application/json',
+      'X-SWEC-Counter': String(newSwec),
+      'X-Auth-Level': session.auth_level
+    }
+  });
+}
+
+// T5: Product Page — Large ViewState (~500KB+)
+async function handleNastyProduct(request, env, corsHeaders) {
+  const body = await request.json();
+  const { nasty_session_id, access_token, swec_counter } = body;
+  const cookieHeader = request.headers.get('Cookie');
+  const cookieSession = getCookieValue(cookieHeader, 'nasty_session');
+
+  if (!nasty_session_id || !access_token) {
+    return new Response(JSON.stringify({
+      error: 'Missing required fields', required: ['nasty_session_id', 'access_token']
+    }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  const session = await env.DB.prepare(
+    'SELECT * FROM nasty_flow_sessions WHERE nasty_session_id = ? AND access_token = ?'
+  ).bind(nasty_session_id, access_token).first();
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Invalid session' }), {
+      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  // Increment SWEC
+  const newSwec = session.swec_counter + 1;
+
+  // Generate product view token
+  const productViewToken = 'pvt_' + generateToken();
+
+  // Build large viewstate (~530KB base64)
+  const vsResult = await buildLargeViewState(nasty_session_id, access_token, String(session.user_id));
+
+  await env.DB.prepare(
+    'UPDATE nasty_flow_sessions SET swec_counter = ?, product_view_token = ?, viewstate_signature = ? WHERE nasty_session_id = ?'
+  ).bind(newSwec, productViewToken, vsResult.signature, nasty_session_id).run();
+
+  return new Response(JSON.stringify({
+    product: {
+      id: 'SKU-1001',
+      name: 'Premium Wireless Headphones',
+      price: 249.99,
+      currency: 'GBP',
+      stock: 42,
+      category: 'Electronics'
+    },
+    viewState: vsResult.viewstate,
+    viewStateSignature: vsResult.signature,
+    viewStateLength: vsResult.rawLength,
+    productViewToken: productViewToken,
+    swecCounter: newSwec
+  }), {
+    status: 200,
+    headers: {
+      ...corsHeaders,
+      'Content-Type': 'application/json',
+      'X-SWEC-Counter': String(newSwec)
+    }
+  });
+}
+
+// T6: Add to Basket — Large Payload Replay + Basket Versioning
+async function handleNastyBasketAdd(request, env, corsHeaders) {
+  const body = await request.json();
+  const { nasty_session_id, access_token, product_view_token, view_state, view_state_signature, product_id, quantity, swec_counter } = body;
+
+  if (!nasty_session_id || !access_token || !product_view_token) {
+    return new Response(JSON.stringify({
+      error: 'Missing required fields',
+      required: ['nasty_session_id', 'access_token', 'product_view_token', 'view_state', 'view_state_signature']
+    }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  const session = await env.DB.prepare(
+    'SELECT * FROM nasty_flow_sessions WHERE nasty_session_id = ? AND access_token = ?'
+  ).bind(nasty_session_id, access_token).first();
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Invalid session' }), {
+      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  // Validate product_view_token
+  if (product_view_token !== session.product_view_token) {
+    return new Response(JSON.stringify({
+      error: 'Invalid product_view_token',
+      hint: 'Token must match the one from T5 (Product page)'
+    }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  // Validate viewstate signature
+  if (view_state_signature && view_state_signature !== session.viewstate_signature) {
+    return new Response(JSON.stringify({
+      error: 'ViewState signature mismatch',
+      hint: 'The viewstate was tampered with or not replayed correctly'
+    }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  // Validate viewstate is present and large enough
+  if (!view_state || view_state.length < 50000) {
+    return new Response(JSON.stringify({
+      error: 'ViewState missing or too small',
+      hint: 'The full ~530KB viewstate from T5 must be replayed',
+      receivedLength: view_state ? view_state.length : 0
+    }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  // Increment SWEC
+  const newSwec = session.swec_counter + 1;
+
+  // Create basket
+  const basketId = 'bsk_' + generateToken();
+  const isFullAuth = session.auth_level === 'full';
+  const ownership = isFullAuth ? 'authenticated' : 'anonymous';
+
+  await env.DB.prepare(
+    'UPDATE nasty_flow_sessions SET swec_counter = ?, basket_id = ?, basket_version = 1, basket_ownership = ? WHERE nasty_session_id = ?'
+  ).bind(newSwec, basketId, ownership, nasty_session_id).run();
+
+  const basePrice = 249.99;
+  const memberDiscount = isFullAuth ? 25.00 : 0;
+
+  return new Response(JSON.stringify({
+    success: true,
+    basket: {
+      basketId: basketId,
+      basketVersion: 1,
+      ownership: ownership,
+      mergePending: !isFullAuth,
+      items: [{ sku: product_id || 'SKU-1001', qty: quantity || 1, price: basePrice, name: 'Premium Wireless Headphones' }],
+      subtotal: basePrice,
+      memberDiscount: memberDiscount,
+      total: basePrice - memberDiscount
+    },
+    swecCounter: newSwec
+  }), {
+    status: 200,
+    headers: {
+      ...corsHeaders,
+      'Content-Type': 'application/json',
+      'X-Basket-Id': basketId,
+      'X-Basket-Version': '1',
+      'X-SWEC-Counter': String(newSwec)
+    }
+  });
+}
+
+// T7: Basket Page — Version Drift
+async function handleNastyBasket(request, env, corsHeaders) {
+  const body = await request.json();
+  const { nasty_session_id, access_token, basket_id, basket_version, swec_counter } = body;
+
+  if (!nasty_session_id || !access_token || !basket_id) {
+    return new Response(JSON.stringify({
+      error: 'Missing required fields', required: ['nasty_session_id', 'access_token', 'basket_id']
+    }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  const session = await env.DB.prepare(
+    'SELECT * FROM nasty_flow_sessions WHERE nasty_session_id = ? AND access_token = ?'
+  ).bind(nasty_session_id, access_token).first();
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Invalid session' }), {
+      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  if (basket_id !== session.basket_id) {
+    return new Response(JSON.stringify({ error: 'basket_id mismatch' }), {
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  // Increment SWEC
+  const newSwec = session.swec_counter + 1;
+
+  // Server applies background promo calc → bumps basket_version to 2
+  const serverVersion = 2;
+  const versionConflict = (basket_version !== undefined && Number(basket_version) !== session.basket_version);
+
+  const isFullAuth = session.auth_level === 'full';
+  const basePrice = 249.99;
+  const promoApplied = isFullAuth && !versionConflict;
+  const discount = promoApplied ? 25.00 : 0;
+
+  await env.DB.prepare(
+    'UPDATE nasty_flow_sessions SET swec_counter = ?, basket_version = ? WHERE nasty_session_id = ?'
+  ).bind(newSwec, serverVersion, nasty_session_id).run();
+
+  return new Response(JSON.stringify({
+    basket: {
+      basketId: session.basket_id,
+      basketVersion: serverVersion,
+      ownership: session.basket_ownership,
+      items: [{ sku: 'SKU-1001', qty: 1, price: basePrice, name: 'Premium Wireless Headphones' }],
+      promoApplied: promoApplied ? 'MEMBER10' : null,
+      subtotal: basePrice,
+      discount: discount,
+      total: basePrice - discount,
+      versionConflictResolved: versionConflict,
+      promoDropped: versionConflict && isFullAuth
+    },
+    swecCounter: newSwec
+  }), {
+    status: 200,
+    headers: {
+      ...corsHeaders,
+      'Content-Type': 'application/json',
+      'X-Basket-Version': String(serverVersion),
+      'X-SWEC-Counter': String(newSwec)
+    }
+  });
+}
+
+// T8: Start Checkout — Client-Assembled Value + Silent Flow Rebuild
+async function handleNastyCheckoutStart(request, env, corsHeaders) {
+  const body = await request.json();
+  const { nasty_session_id, access_token, basket_id, basket_version, aura_context, swec_counter } = body;
+
+  if (!nasty_session_id || !access_token || !basket_id) {
+    return new Response(JSON.stringify({
+      error: 'Missing required fields',
+      required: ['nasty_session_id', 'access_token', 'basket_id', 'basket_version', 'aura_context']
+    }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  const session = await env.DB.prepare(
+    'SELECT * FROM nasty_flow_sessions WHERE nasty_session_id = ? AND access_token = ?'
+  ).bind(nasty_session_id, access_token).first();
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Invalid session' }), {
+      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  // Increment SWEC
+  const newSwec = session.swec_counter + 1;
+
+  // Validate aura_context (client-assembled from T4 fragments)
+  const expectedAura = `${session.aura_fwuid};${session.aura_mode};${session.aura_app}`;
+  const auraValid = aura_context === expectedAura;
+
+  // Check overall state consistency
+  const stateConsistent = (
+    session.auth_level === 'full' &&
+    basket_id === session.basket_id &&
+    Number(basket_version) === session.basket_version &&
+    auraValid
+  );
+
+  const flowRecovered = !stateConsistent;
+  const checkoutFlowId = flowRecovered
+    ? 'cflow_rebuilt_' + generateToken()
+    : 'cflow_' + generateToken();
+  const requestVerificationToken = 'rvt_' + generateToken();
+
+  const isFullAuth = session.auth_level === 'full';
+  const total = isFullAuth && !flowRecovered ? 224.99 : 249.99;
+
+  await env.DB.prepare(
+    'UPDATE nasty_flow_sessions SET swec_counter = ?, checkout_flow_id = ?, flow_recovered = ?, request_verification_token = ? WHERE nasty_session_id = ?'
+  ).bind(newSwec, checkoutFlowId, flowRecovered ? 1 : 0, requestVerificationToken, nasty_session_id).run();
+
+  return new Response(JSON.stringify({
+    success: true,
+    checkout: {
+      checkoutFlowId: checkoutFlowId,
+      flowRecovered: flowRecovered,
+      recoveryMode: flowRecovered ? 'state-rebuilt' : null,
+      basketSnapshot: { version: session.basket_version, total: total },
+      deliveryAddressRequired: true,
+      requestVerificationToken: requestVerificationToken
+    },
+    swecCounter: newSwec
+  }), {
+    status: 200,
+    headers: {
+      ...corsHeaders,
+      'Content-Type': 'application/json',
+      'X-Checkout-Flow-Id': checkoutFlowId,
+      'X-Flow-Recovered': String(flowRecovered),
+      'X-SWEC-Counter': String(newSwec)
+    }
+  });
+}
+
+// T9: Delivery Options — Header-Only Token
+async function handleNastyDeliveryOptions(request, env, corsHeaders) {
+  const body = await request.json();
+  const { nasty_session_id, checkout_flow_id, basket_id, basket_version, swec_counter } = body;
+
+  if (!nasty_session_id || !checkout_flow_id) {
+    return new Response(JSON.stringify({
+      error: 'Missing required fields', required: ['nasty_session_id', 'checkout_flow_id']
+    }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  const session = await env.DB.prepare(
+    'SELECT * FROM nasty_flow_sessions WHERE nasty_session_id = ?'
+  ).bind(nasty_session_id).first();
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Invalid session' }), {
+      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  // Increment SWEC
+  const newSwec = session.swec_counter + 1;
+
+  // Check if checkout_flow_id matches
+  const flowMatches = checkout_flow_id === session.checkout_flow_id;
+  const isDegraded = session.flow_recovered === 1 || !flowMatches;
+
+  // Generate delivery quote token tied to the ACTUAL flow
+  const deliveryQuoteToken = await deriveNastyToken(
+    nasty_session_id,
+    `delivery_quote|${session.checkout_flow_id}|${session.basket_version}`
+  );
+
+  await env.DB.prepare(
+    'UPDATE nasty_flow_sessions SET swec_counter = ?, delivery_quote_token = ? WHERE nasty_session_id = ?'
+  ).bind(newSwec, deliveryQuoteToken, nasty_session_id).run();
+
+  // Delivery quote token is ONLY in the header, never in the JSON body
+  const deliveryOptions = isDegraded
+    ? [
+        { id: 'standard', label: 'Standard (3-5 days)', price: 4.99 },
+        { id: 'express', label: 'Express (next day)', price: 12.99 }
+      ]
+    : [
+        { id: 'standard', label: 'Standard (3-5 days)', price: 4.99 },
+        { id: 'express', label: 'Express (next day)', price: 12.99 },
+        { id: 'premium', label: 'Premium (same day)', price: 24.99 }
+      ];
+
+  return new Response(JSON.stringify({
+    deliveryOptions: deliveryOptions,
+    selectedOption: 'standard',
+    quoteStatus: isDegraded ? 'fallback' : 'confirmed',
+    deliveryEta: isDegraded ? '3-7 business days' : '2026-03-27',
+    swecCounter: newSwec
+  }), {
+    status: 200,
+    headers: {
+      ...corsHeaders,
+      'Content-Type': 'application/json',
+      'X-Delivery-Quote': deliveryQuoteToken,
+      'X-SWEC-Counter': String(newSwec)
+    }
+  });
+}
+
+// T10: Payment Page — HTML Response with Mixed Extraction
+async function handleNastyPayment(request, env, corsHeaders) {
+  const body = await request.json();
+  const { nasty_session_id, checkout_flow_id, delivery_quote_token, swec_counter } = body;
+  const headerDeliveryQuote = request.headers.get('X-Delivery-Quote');
+
+  if (!nasty_session_id || !checkout_flow_id) {
+    return new Response(JSON.stringify({
+      error: 'Missing required fields', required: ['nasty_session_id', 'checkout_flow_id', 'delivery_quote_token']
+    }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  const session = await env.DB.prepare(
+    'SELECT * FROM nasty_flow_sessions WHERE nasty_session_id = ?'
+  ).bind(nasty_session_id).first();
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Invalid session' }), {
+      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  // Increment SWEC
+  const newSwec = session.swec_counter + 1;
+
+  // Check delivery quote token matches (dual: body + header)
+  const bodyQuoteValid = delivery_quote_token === session.delivery_quote_token;
+  const headerQuoteValid = headerDeliveryQuote === session.delivery_quote_token;
+  const isDegraded = session.flow_recovered === 1 || !bodyQuoteValid || !headerQuoteValid;
+
+  // Generate payment tokens
+  const paymentNonce = isDegraded
+    ? 'pnonce_fallback_' + generateToken()
+    : 'pnonce_' + generateToken();
+  const pricingSignature = await sha256Base64(
+    `pricing|${session.checkout_flow_id}|${session.basket_id}|${session.basket_version}|${paymentNonce}`
+  );
+
+  // Decoy nonce
+  const decoyNonce = 'pnonce_backup_' + generateToken();
+
+  await env.DB.prepare(
+    'UPDATE nasty_flow_sessions SET swec_counter = ?, payment_nonce = ?, pricing_signature = ? WHERE nasty_session_id = ?'
+  ).bind(newSwec, paymentNonce, pricingSignature, nasty_session_id).run();
+
+  const isFullAuth = session.auth_level === 'full';
+  const loyaltyDiscount = isFullAuth && !isDegraded ? 25.00 : 0;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head><title>Payment - LoadMagic Demo</title></head>
+<body>
+  <h1>Payment Details</h1>
+  <form id="paymentForm" method="POST" action="/api/nasty/confirm-order">
+    <input type="hidden" name="payment_nonce" value="${paymentNonce}" />
+    <input type="hidden" name="pricing_signature" value="${escapeHtml(pricingSignature)}" />
+    <input type="hidden" name="payment_nonce_backup" value="${decoyNonce}" />
+    <input type="hidden" name="checkout_flow_id" value="${session.checkout_flow_id}" />
+    <div>
+      <label>Card Number:</label>
+      <input type="text" value="4111 1111 1111 1111" readonly />
+    </div>
+    <button type="submit">Confirm Order</button>
+  </form>
+  <script>
+    window.__PAYMENT_BOOTSTRAP__ = {
+      riskMode: "${isDegraded ? 'review' : 'standard'}",
+      customerVerified: ${!isDegraded},
+      loyaltyDiscount: ${loyaltyDiscount},
+      paymentMethods: ${isDegraded ? '["visa"]' : '["visa", "mastercard", "amex"]'},
+      pricingSignature: "${pricingSignature}"
+    };
+  </script>
+</body>
+</html>`;
+
+  return new Response(html, {
+    status: 200,
+    headers: {
+      ...corsHeaders,
+      'Content-Type': 'text/html',
+      'X-Payment-Nonce': paymentNonce,
+      'X-Pricing-Sig': pricingSignature,
+      'X-SWEC-Counter': String(newSwec)
+    }
+  });
+}
+
+// T11: Confirm Order — Explosion
+async function handleNastyConfirmOrder(request, env, corsHeaders) {
+  const body = await request.json();
+  const {
+    nasty_session_id, checkout_flow_id, basket_id, basket_version,
+    delivery_quote_token, payment_nonce, pricing_signature, swec_counter
+  } = body;
+  const cookieHeader = request.headers.get('Cookie');
+  const cookieSession = getCookieValue(cookieHeader, 'nasty_session');
+  const cookieAuth = getCookieValue(cookieHeader, 'nasty_auth');
+
+  if (!nasty_session_id) {
+    return new Response(JSON.stringify({ error: 'Missing nasty_session_id' }), {
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  const session = await env.DB.prepare(
+    'SELECT * FROM nasty_flow_sessions WHERE nasty_session_id = ?'
+  ).bind(nasty_session_id).first();
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Invalid session' }), {
+      status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  // Run ALL checks and collect results
+  const checks = {};
+
+  // Auth level
+  checks.authLevelCheck = session.auth_level === 'full'
+    ? 'PASS' : `FAIL: expected 'full', got '${session.auth_level}'`;
+
+  // Auth cookie
+  const expectedAuthCookie = session.auth_level === 'full'
+    ? await deriveNastyToken(nasty_session_id, 'auth_cookie')
+    : null;
+  checks.authCookieCheck = cookieAuth && cookieAuth === expectedAuthCookie
+    ? 'PASS' : `FAIL: nasty_auth cookie ${cookieAuth ? 'invalid' : 'missing'}`;
+
+  // Basket ownership
+  checks.basketOwnershipCheck = session.basket_ownership === 'authenticated'
+    ? 'PASS' : `FAIL: expected 'authenticated', got '${session.basket_ownership}'`;
+
+  // Checkout flow
+  checks.checkoutFlowCheck = checkout_flow_id === session.checkout_flow_id
+    ? (session.flow_recovered ? 'WARN: flow was rebuilt (stale flow ID matched rebuilt flow)' : 'PASS')
+    : `FAIL: checkout_flow_id mismatch`;
+
+  checks.flowRecoveryCheck = session.flow_recovered === 0
+    ? 'PASS' : 'FAIL: flow was rebuilt (flowRecovered: true)';
+
+  // Basket
+  checks.basketIdCheck = basket_id === session.basket_id
+    ? 'PASS' : `FAIL: basket_id mismatch`;
+  checks.basketVersionCheck = Number(basket_version) === session.basket_version
+    ? 'PASS' : `FAIL: expected version ${session.basket_version}, got ${basket_version}`;
+
+  // Delivery quote
+  checks.deliveryQuoteCheck = delivery_quote_token === session.delivery_quote_token
+    ? 'PASS' : 'FAIL: delivery_quote_token mismatch (may be tied to wrong flow)';
+
+  // Payment
+  checks.paymentNonceCheck = payment_nonce === session.payment_nonce
+    ? 'PASS' : 'FAIL: payment_nonce mismatch';
+  checks.pricingSignatureCheck = pricing_signature === session.pricing_signature
+    ? 'PASS' : 'FAIL: pricing_signature mismatch';
+
+  // SWEC counter
+  const expectedSwec = session.swec_counter + 1;
+  checks.sequenceCounterCheck = String(swec_counter) === String(expectedSwec)
+    ? 'PASS' : `FAIL: expected SWEC ${expectedSwec}, got ${swec_counter}`;
+
+  // Session cookie
+  checks.sessionCookieCheck = cookieSession === nasty_session_id
+    ? 'PASS' : 'FAIL: nasty_session cookie mismatch';
+
+  // Determine if all passed
+  const allPassed = Object.values(checks).every(v => v === 'PASS');
+  const failures = Object.entries(checks).filter(([, v]) => v.startsWith('FAIL'));
+
+  if (allPassed) {
+    return new Response(JSON.stringify({
+      success: true,
+      order: {
+        orderId: 'ORD-' + Date.now().toString(36).toUpperCase(),
+        confirmationNumber: 'CNF' + Math.random().toString(36).substr(2, 8).toUpperCase(),
+        status: 'confirmed',
+        total: 224.99,
+        currency: 'GBP',
+        authLevel: 'full',
+        basketOwnership: 'authenticated',
+        flowIntegrity: 'intact'
+      },
+      diagnostics: checks,
+      message: 'Order placed successfully!'
+    }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  // EXPLOSION — HTTP 500 with diagnostics
+  // Trace the root cause
+  let rootCause = 'Unknown';
+  const breadcrumbs = [];
+
+  if (checks.authLevelCheck.startsWith('FAIL')) {
+    rootCause = 'Authentication degraded at Transaction 3 (login-submit). All downstream state was built on guest-upgraded context.';
+    breadcrumbs.push("T3: authLevel was 'guest-upgraded' (not 'full') — likely stale csrf_token, expired csrf, or wrong auth_flow_id/page_instance_id");
+  }
+  if (checks.basketOwnershipCheck.startsWith('FAIL')) {
+    breadcrumbs.push("T6: basket created with 'anonymous' ownership (consequence of partial auth)");
+  }
+  if (checks.flowRecoveryCheck.startsWith('FAIL')) {
+    breadcrumbs.push('T8: checkout flow was rebuilt (flowRecovered: true) — state inconsistency detected');
+  }
+  if (checks.deliveryQuoteCheck.startsWith('FAIL')) {
+    breadcrumbs.push('T9: delivery quote token tied to rebuilt flow, not the original');
+  }
+  if (checks.paymentNonceCheck.startsWith('FAIL')) {
+    breadcrumbs.push('T10: payment nonce generated in fallback mode');
+  }
+  if (checks.pricingSignatureCheck.startsWith('FAIL')) {
+    breadcrumbs.push('T10: pricing signature mismatch — computed against wrong flow state');
+  }
+
+  if (!rootCause.startsWith('Auth') && checks.flowRecoveryCheck.startsWith('FAIL')) {
+    rootCause = 'Checkout flow was silently rebuilt at Transaction 8 due to state inconsistency. Downstream tokens (delivery quote, payment nonce) were tied to the rebuilt flow.';
+  }
+
+  return new Response(JSON.stringify({
+    error: 'ORDER_STATE_RECONCILIATION_FAILED',
+    status: 500,
+    message: 'Unable to process order: internal state reconciliation failed',
+    diagnostics: checks,
+    failureCount: failures.length,
+    rootCauseHint: rootCause,
+    breadcrumbs: breadcrumbs
+  }), {
+    status: 500,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+  });
+}
+
+// ============================================================================
+// Nasty Flow HTML Page
+// ============================================================================
+function getNastyFlowPage() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Nasty Flow - LoadMagic Test Demo</title>
+  <style>
+    ${BASE_STYLES}
+
+    .flow-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .step-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .step-num {
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .step-info { flex: 1; }
+    .step-info h3 { margin: 0 0 4px; color: var(--fg); font-size: 14px; }
+    .step-info p { margin: 0; color: var(--muted); font-size: 12px; }
+
+    .edge-case-tag {
+      display: inline-block;
+      background: rgba(0, 200, 150, 0.15);
+      color: #00c896;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-top: 4px;
+    }
+
+    .step-btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .step-btn:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+    .step-btn:hover:not(:disabled) { opacity: 0.85; }
+
+    .step-status {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+    .status-pass { background: rgba(0,200,100,0.15); color: #00c864; }
+    .status-degraded { background: rgba(255,170,0,0.15); color: #ffaa00; }
+    .status-fail { background: rgba(255,60,60,0.15); color: #ff3c3c; }
+    .status-pending { background: rgba(150,150,150,0.1); color: var(--muted); }
+
+    .result-area {
+      background: #0a0e18;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 16px;
+      max-height: 400px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 12px;
+      color: var(--fg);
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .session-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+      font-size: 12px;
+    }
+    .session-card h3 { margin: 0 0 8px; color: var(--fg); }
+    .session-card code { color: var(--accent); }
+
+    .run-all-btn {
+      background: linear-gradient(135deg, var(--accent), #00c896);
+      color: #fff;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+    .run-all-btn:hover { opacity: 0.9; }
+  </style>
+</head>
+<body>
+  ${renderHeader('Nasty Flow', 'Cascading silent failure checkout — 11 transactions, layered corruption')}
+  <div class="content" style="max-width: 960px; margin: 0 auto; padding: 24px;">
+
+    <div class="session-card" id="sessionInfo">
+      <h3>Session</h3>
+      <p>Login via the <a href="/login" style="color:var(--accent)">Login page</a> first, then start the flow.</p>
+      <p>Session Token: <code id="dispSessionToken">—</code></p>
+      <p>User ID: <code id="dispUserId">—</code></p>
+    </div>
+
+    <button class="run-all-btn" onclick="runAllSteps()">Run All Steps (Golden Path)</button>
+
+    <div class="flow-grid">
+      <div class="step-box" id="stepBox1">
+        <div class="step-num">1</div>
+        <div class="step-info">
+          <h3>Home Page</h3>
+          <p>Establishes nasty session, generates visitorId + journeyId</p>
+          <span class="edge-case-tag">Mixed extraction: JSON body + header + nested path</span>
+        </div>
+        <span class="step-status status-pending" id="status1">pending</span>
+        <button class="step-btn" onclick="runStep(1)">Run</button>
+      </div>
+
+      <div class="step-box" id="stepBox2">
+        <div class="step-num">2</div>
+        <div class="step-info">
+          <h3>Login Page</h3>
+          <p>Returns HTML with csrf_token (entity-encoded), auth_flow_id, 200 decoys, pageInstanceId in script</p>
+          <span class="edge-case-tag">HTML entities + 200 decoys + 30s expiry + embedded script</span>
+        </div>
+        <span class="step-status status-pending" id="status2">pending</span>
+        <button class="step-btn" onclick="runStep(2)" disabled id="btn2">Run</button>
+      </div>
+
+      <div class="step-box" id="stepBox3">
+        <div class="step-num">3</div>
+        <div class="step-info">
+          <h3>Login Submit</h3>
+          <p>Validates tokens — full auth or silent partial auth (HTTP 200 either way!)</p>
+          <span class="edge-case-tag">Silent failure: partial auth on stale/encoded tokens</span>
+        </div>
+        <span class="step-status status-pending" id="status3">pending</span>
+        <button class="step-btn" onclick="runStep(3)" disabled id="btn3">Run</button>
+      </div>
+
+      <div class="step-box" id="stepBox4">
+        <div class="step-num">4</div>
+        <div class="step-info">
+          <h3>Account Summary</h3>
+          <p>SWEC counter validation + aura context fragments for assembly</p>
+          <span class="edge-case-tag">Siebel SWEC counter + Salesforce aura.context fragments</span>
+        </div>
+        <span class="step-status status-pending" id="status4">pending</span>
+        <button class="step-btn" onclick="runStep(4)" disabled id="btn4">Run</button>
+      </div>
+
+      <div class="step-box" id="stepBox5">
+        <div class="step-num">5</div>
+        <div class="step-info">
+          <h3>Product Page</h3>
+          <p>Returns product details + ~530KB viewstate blob + productViewToken</p>
+          <span class="edge-case-tag">Large ViewState (~500KB+ base64) for externalized extraction</span>
+        </div>
+        <span class="step-status status-pending" id="status5">pending</span>
+        <button class="step-btn" onclick="runStep(5)" disabled id="btn5">Run</button>
+      </div>
+
+      <div class="step-box" id="stepBox6">
+        <div class="step-num">6</div>
+        <div class="step-info">
+          <h3>Add to Basket</h3>
+          <p>Replays ~530KB viewstate + creates basket (authenticated or anonymous)</p>
+          <span class="edge-case-tag">Large payload replay + basket ownership based on auth level</span>
+        </div>
+        <span class="step-status status-pending" id="status6">pending</span>
+        <button class="step-btn" onclick="runStep(6)" disabled id="btn6">Run</button>
+      </div>
+
+      <div class="step-box" id="stepBox7">
+        <div class="step-num">7</div>
+        <div class="step-info">
+          <h3>Basket Page</h3>
+          <p>Server bumps version (promo calc), detects version drift</p>
+          <span class="edge-case-tag">Version drift: versionConflictResolved breadcrumb</span>
+        </div>
+        <span class="step-status status-pending" id="status7">pending</span>
+        <button class="step-btn" onclick="runStep(7)" disabled id="btn7">Run</button>
+      </div>
+
+      <div class="step-box" id="stepBox8">
+        <div class="step-num">8</div>
+        <div class="step-info">
+          <h3>Start Checkout</h3>
+          <p>Validates client-assembled aura_context — silent flow rebuild on mismatch</p>
+          <span class="edge-case-tag">Client-assembled value + silent flow rebuild</span>
+        </div>
+        <span class="step-status status-pending" id="status8">pending</span>
+        <button class="step-btn" onclick="runStep(8)" disabled id="btn8">Run</button>
+      </div>
+
+      <div class="step-box" id="stepBox9">
+        <div class="step-num">9</div>
+        <div class="step-info">
+          <h3>Delivery Options</h3>
+          <p>Delivery quote token is ONLY in X-Delivery-Quote response header</p>
+          <span class="edge-case-tag">Header-only extraction (not in JSON body)</span>
+        </div>
+        <span class="step-status status-pending" id="status9">pending</span>
+        <button class="step-btn" onclick="runStep(9)" disabled id="btn9">Run</button>
+      </div>
+
+      <div class="step-box" id="stepBox10">
+        <div class="step-num">10</div>
+        <div class="step-info">
+          <h3>Payment Page</h3>
+          <p>HTML response: nonce in hidden field, pricingSignature in embedded script</p>
+          <span class="edge-case-tag">HTML + embedded script JSON + dual header/body validation</span>
+        </div>
+        <span class="step-status status-pending" id="status10">pending</span>
+        <button class="step-btn" onclick="runStep(10)" disabled id="btn10">Run</button>
+      </div>
+
+      <div class="step-box" id="stepBox11">
+        <div class="step-num">11</div>
+        <div class="step-info">
+          <h3>Confirm Order</h3>
+          <p>Full state reconciliation — success or HTTP 500 with root cause diagnostics</p>
+          <span class="edge-case-tag">Explosion: all checks, rootCauseHint, breadcrumbs</span>
+        </div>
+        <span class="step-status status-pending" id="status11">pending</span>
+        <button class="step-btn" onclick="runStep(11)" disabled id="btn11">Run</button>
+      </div>
+    </div>
+
+    <div class="result-area" id="resultArea">Results will appear here...</div>
+  </div>
+
+  <script>
+    // Flow state
+    const state = {
+      session_token: localStorage.getItem('session_token'),
+      user_id: localStorage.getItem('user_id'),
+      nasty_session_id: null,
+      visitor_id: null,
+      journey_id: null,
+      csrf_token: null,
+      auth_flow_id: null,
+      page_instance_id: null,
+      access_token: null,
+      swec_counter: 0,
+      aura_fwuid: null,
+      aura_mode: null,
+      aura_app: null,
+      product_view_token: null,
+      view_state: null,
+      view_state_signature: null,
+      basket_id: null,
+      basket_version: null,
+      checkout_flow_id: null,
+      delivery_quote_token: null,
+      payment_nonce: null,
+      pricing_signature: null
+    };
+
+    // Display session info
+    document.getElementById('dispSessionToken').textContent = state.session_token || 'not logged in';
+    document.getElementById('dispUserId').textContent = state.user_id || '—';
+
+    function log(msg) {
+      const area = document.getElementById('resultArea');
+      area.textContent += msg + '\\n';
+      area.scrollTop = area.scrollHeight;
+    }
+
+    function setStatus(step, status, label) {
+      const el = document.getElementById('status' + step);
+      el.className = 'step-status status-' + status;
+      el.textContent = label || status;
+    }
+
+    function enableBtn(step) {
+      const btn = document.getElementById('btn' + step);
+      if (btn) btn.disabled = false;
+    }
+
+    async function runStep(step) {
+      log('\\n--- Step ' + step + ' ---');
+      setStatus(step, 'pending', 'running...');
+      try {
+        switch(step) {
+          case 1: await stepHome(); break;
+          case 2: await stepLoginPage(); break;
+          case 3: await stepLoginSubmit(); break;
+          case 4: await stepAccountSummary(); break;
+          case 5: await stepProduct(); break;
+          case 6: await stepBasketAdd(); break;
+          case 7: await stepBasket(); break;
+          case 8: await stepCheckoutStart(); break;
+          case 9: await stepDeliveryOptions(); break;
+          case 10: await stepPayment(); break;
+          case 11: await stepConfirmOrder(); break;
+        }
+      } catch(e) {
+        setStatus(step, 'fail', 'error');
+        log('ERROR: ' + e.message);
+      }
+    }
+
+    async function runAllSteps() {
+      document.getElementById('resultArea').textContent = '';
+      for (let i = 1; i <= 11; i++) {
+        await runStep(i);
+        // Small delay between steps
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
+
+    async function stepHome() {
+      const res = await fetch('/api/nasty/home', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_token: state.session_token, user_id: Number(state.user_id) })
+      });
+      const data = await res.json();
+      log(JSON.stringify(data, null, 2));
+      if (data.success) {
+        state.nasty_session_id = data.nastySessionId;
+        state.visitor_id = data.visitorId;
+        state.journey_id = data.metadata.tracking.journeyId;
+        setStatus(1, 'pass', 'done');
+        enableBtn(2);
+      } else {
+        setStatus(1, 'fail', 'failed');
+      }
+    }
+
+    async function stepLoginPage() {
+      const res = await fetch('/api/nasty/login-page', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nasty_session_id: state.nasty_session_id })
+      });
+      const html = await res.text();
+      // Extract csrf_token from hidden field and decode HTML entities
+      const csrfMatch = html.match(/name="csrf_token"\\s+value="([^"]*)"/);
+      if (csrfMatch) {
+        // Decode HTML entities
+        const ta = document.createElement('textarea');
+        ta.innerHTML = csrfMatch[1];
+        state.csrf_token = ta.value;
+        log('Extracted csrf_token (decoded): ' + state.csrf_token);
+      }
+      // Extract auth_flow_id
+      const afMatch = html.match(/name="auth_flow_id"\\s+value="([^"]*)"/);
+      if (afMatch) {
+        state.auth_flow_id = afMatch[1];
+        log('Extracted auth_flow_id: ' + state.auth_flow_id);
+      }
+      // Extract pageInstanceId from <script> JSON
+      const piMatch = html.match(/pageInstanceId:\\s*"([^"]*)"/);
+      if (piMatch) {
+        state.page_instance_id = piMatch[1];
+        log('Extracted pageInstanceId from script: ' + state.page_instance_id);
+      }
+      log('(HTML response: ' + html.length + ' chars, contains 200 decoy fields)');
+      setStatus(2, 'pass', 'done');
+      enableBtn(3);
+    }
+
+    async function stepLoginSubmit() {
+      const res = await fetch('/api/nasty/login-submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nasty_session_id: state.nasty_session_id,
+          csrf_token: state.csrf_token,
+          auth_flow_id: state.auth_flow_id,
+          page_instance_id: state.page_instance_id,
+          username: 'testuser1',
+          password: '123'
+        })
+      });
+      const data = await res.json();
+      log(JSON.stringify(data, null, 2));
+      state.access_token = data.session.accessToken;
+      const authLevel = data.user.authLevel;
+      if (authLevel === 'full') {
+        setStatus(3, 'pass', 'full auth');
+      } else {
+        setStatus(3, 'degraded', 'DEGRADED: ' + authLevel);
+      }
+      enableBtn(4);
+    }
+
+    async function stepAccountSummary() {
+      state.swec_counter++;
+      const res = await fetch('/api/nasty/account-summary', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-SWEC-Counter': String(state.swec_counter)
+        },
+        body: JSON.stringify({
+          nasty_session_id: state.nasty_session_id,
+          access_token: state.access_token
+        })
+      });
+      const data = await res.json();
+      log(JSON.stringify(data, null, 2));
+      state.swec_counter = data.swecCounter;
+      // Capture aura fragments
+      if (data.auraContext) {
+        state.aura_fwuid = data.auraContext.fwuid;
+        state.aura_mode = data.auraContext.mode;
+        state.aura_app = data.auraContext.app;
+        log('Aura fragments: ' + state.aura_fwuid + ';' + state.aura_mode + ';' + state.aura_app);
+      }
+      setStatus(4, data.authLevel === 'full' ? 'pass' : 'degraded', data.authLevel);
+      enableBtn(5);
+    }
+
+    async function stepProduct() {
+      const res = await fetch('/api/nasty/product', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nasty_session_id: state.nasty_session_id,
+          access_token: state.access_token,
+          swec_counter: state.swec_counter
+        })
+      });
+      const data = await res.json();
+      state.product_view_token = data.productViewToken;
+      state.view_state = data.viewState;
+      state.view_state_signature = data.viewStateSignature;
+      state.swec_counter = data.swecCounter;
+      log('Product: ' + data.product.name + ' - ' + data.product.price + ' ' + data.product.currency);
+      log('ViewState length: ' + (data.viewState ? data.viewState.length : 0) + ' chars');
+      log('productViewToken: ' + data.productViewToken);
+      setStatus(5, 'pass', 'done (' + Math.round((data.viewState||'').length/1024) + 'KB viewstate)');
+      enableBtn(6);
+    }
+
+    async function stepBasketAdd() {
+      const res = await fetch('/api/nasty/basket-add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nasty_session_id: state.nasty_session_id,
+          access_token: state.access_token,
+          product_view_token: state.product_view_token,
+          view_state: state.view_state,
+          view_state_signature: state.view_state_signature,
+          product_id: 'SKU-1001',
+          quantity: 1,
+          swec_counter: state.swec_counter
+        })
+      });
+      const data = await res.json();
+      log(JSON.stringify(data, null, 2));
+      state.basket_id = data.basket.basketId;
+      state.basket_version = data.basket.basketVersion;
+      state.swec_counter = data.swecCounter;
+      const ownership = data.basket.ownership;
+      setStatus(6, ownership === 'authenticated' ? 'pass' : 'degraded', ownership);
+      enableBtn(7);
+    }
+
+    async function stepBasket() {
+      const res = await fetch('/api/nasty/basket', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nasty_session_id: state.nasty_session_id,
+          access_token: state.access_token,
+          basket_id: state.basket_id,
+          basket_version: state.basket_version,
+          swec_counter: state.swec_counter
+        })
+      });
+      const data = await res.json();
+      log(JSON.stringify(data, null, 2));
+      state.basket_version = data.basket.basketVersion;
+      state.swec_counter = data.swecCounter;
+      setStatus(7, data.basket.versionConflictResolved ? 'degraded' : 'pass',
+        data.basket.versionConflictResolved ? 'version drift!' : 'v' + data.basket.basketVersion);
+      enableBtn(8);
+    }
+
+    async function stepCheckoutStart() {
+      const auraContext = state.aura_fwuid + ';' + state.aura_mode + ';' + state.aura_app;
+      const res = await fetch('/api/nasty/checkout-start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nasty_session_id: state.nasty_session_id,
+          access_token: state.access_token,
+          basket_id: state.basket_id,
+          basket_version: state.basket_version,
+          aura_context: auraContext,
+          swec_counter: state.swec_counter
+        })
+      });
+      const data = await res.json();
+      log(JSON.stringify(data, null, 2));
+      state.checkout_flow_id = data.checkout.checkoutFlowId;
+      state.swec_counter = data.swecCounter;
+      setStatus(8, data.checkout.flowRecovered ? 'degraded' : 'pass',
+        data.checkout.flowRecovered ? 'REBUILT!' : 'intact');
+      enableBtn(9);
+    }
+
+    async function stepDeliveryOptions() {
+      const res = await fetch('/api/nasty/delivery-options', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nasty_session_id: state.nasty_session_id,
+          checkout_flow_id: state.checkout_flow_id,
+          basket_id: state.basket_id,
+          basket_version: state.basket_version,
+          swec_counter: state.swec_counter
+        })
+      });
+      // Token is ONLY in the header
+      state.delivery_quote_token = res.headers.get('X-Delivery-Quote');
+      const data = await res.json();
+      log(JSON.stringify(data, null, 2));
+      log('X-Delivery-Quote header: ' + state.delivery_quote_token);
+      state.swec_counter = data.swecCounter;
+      setStatus(9, data.quoteStatus === 'confirmed' ? 'pass' : 'degraded', data.quoteStatus);
+      enableBtn(10);
+    }
+
+    async function stepPayment() {
+      const res = await fetch('/api/nasty/payment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Delivery-Quote': state.delivery_quote_token || ''
+        },
+        body: JSON.stringify({
+          nasty_session_id: state.nasty_session_id,
+          checkout_flow_id: state.checkout_flow_id,
+          delivery_quote_token: state.delivery_quote_token,
+          swec_counter: state.swec_counter
+        })
+      });
+      const html = await res.text();
+      // Extract payment_nonce from hidden field
+      const nonceMatch = html.match(/name="payment_nonce"\\s+value="([^"]*)"/);
+      if (nonceMatch) {
+        state.payment_nonce = nonceMatch[1];
+        log('Extracted payment_nonce: ' + state.payment_nonce);
+      }
+      // Extract pricingSignature from embedded script JSON
+      const sigMatch = html.match(/pricingSignature:\\s*"([^"]*)"/);
+      if (sigMatch) {
+        state.pricing_signature = sigMatch[1];
+        log('Extracted pricingSignature from script: ' + state.pricing_signature);
+      }
+      // Check degraded indicators
+      const riskMatch = html.match(/riskMode:\\s*"([^"]*)"/);
+      const riskMode = riskMatch ? riskMatch[1] : 'unknown';
+      state.swec_counter = (state.swec_counter || 0) + 1;
+      log('riskMode: ' + riskMode);
+      setStatus(10, riskMode === 'standard' ? 'pass' : 'degraded', riskMode);
+      enableBtn(11);
+    }
+
+    async function stepConfirmOrder() {
+      const res = await fetch('/api/nasty/confirm-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nasty_session_id: state.nasty_session_id,
+          checkout_flow_id: state.checkout_flow_id,
+          basket_id: state.basket_id,
+          basket_version: state.basket_version,
+          delivery_quote_token: state.delivery_quote_token,
+          payment_nonce: state.payment_nonce,
+          pricing_signature: state.pricing_signature,
+          swec_counter: state.swec_counter
+        })
+      });
+      const data = await res.json();
+      log(JSON.stringify(data, null, 2));
+      if (res.status === 200 && data.success) {
+        setStatus(11, 'pass', 'ORDER CONFIRMED!');
+      } else {
+        setStatus(11, 'fail', 'HTTP ' + res.status + ' — ' + (data.failureCount || 0) + ' checks failed');
+        if (data.rootCauseHint) log('\\nROOT CAUSE: ' + data.rootCauseHint);
+        if (data.breadcrumbs) {
+          log('\\nBREADCRUMBS:');
+          data.breadcrumbs.forEach(b => log('  - ' + b));
+        }
+      }
+    }
+  </script>
+</body>
+</html>`;
+}
