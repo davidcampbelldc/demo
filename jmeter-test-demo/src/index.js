@@ -140,6 +140,9 @@ export default {
               headers: { ...corsHeaders, 'Content-Type': 'text/html' }
             });
 
+          case path === '/api/nasty/init' && method === 'POST':
+            return await handleNastyInit(request, env, corsHeaders);
+
           case path === '/api/nasty/home' && method === 'POST':
             return await handleNastyHome(request, env, corsHeaders);
 
@@ -5057,7 +5060,56 @@ function getProductsPage() {
 // NASTY FLOW — Cascading Silent Failure Checkout Demo
 // ============================================================================
 
-// T1: Home — Mixed Extraction Types
+// Init — Self-contained user creation for multi-threaded testing
+async function handleNastyInit(request, env, corsHeaders) {
+  let body = {};
+  try { body = await request.json(); } catch (e) { /* empty body OK, defaults to count=1 */ }
+  const count = Math.min(Math.max(parseInt(body.count) || 1, 1), 50);
+
+  const users = [];
+  for (let i = 0; i < count; i++) {
+    const suffix = generateToken().slice(0, 8);
+    const username = `nasty_${suffix}`;
+    const password = `np_${generateToken().slice(0, 8)}`;
+    const passwordHash = `hash${password}`;
+    const email = `${username}@loadmagic.test`;
+    const sessionToken = generateToken();
+
+    // Insert user
+    const result = await env.DB.prepare(
+      'INSERT INTO users (username, password_hash, email, session_token) VALUES (?, ?, ?, ?)'
+    ).bind(username, passwordHash, email, sessionToken).run();
+
+    const userId = result.meta?.last_row_id;
+
+    users.push({
+      user_id: userId,
+      username: username,
+      password: password,
+      session_token: sessionToken,
+      ready: true
+    });
+  }
+
+  return new Response(JSON.stringify({ users }), {
+    status: 200,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+  });
+}
+
+// Sticky session route validation — returns 502 "Bad Gateway" on mismatch (like a real LB)
+function validateRouteId(request, session, corsHeaders) {
+  const cookieHeader = request.headers.get('Cookie');
+  const routeCookie = getCookieValue(cookieHeader, 'ROUTEID');
+  if (!routeCookie || routeCookie !== session.route_id) {
+    return new Response(JSON.stringify({ error: 'Bad Gateway' }), {
+      status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+  return null; // valid
+}
+
+// T1: Home — Mixed Extraction Types + Sticky Session Cookie
 async function handleNastyHome(request, env, corsHeaders) {
   const { session_token, user_id } = await request.json();
 
@@ -5065,7 +5117,7 @@ async function handleNastyHome(request, env, corsHeaders) {
     return new Response(JSON.stringify({
       error: 'Missing required fields',
       required: ['session_token', 'user_id'],
-      hint: 'Login via /api/login first to get a session_token'
+      hint: 'Use /api/nasty/init to create a session'
     }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 
@@ -5082,11 +5134,15 @@ async function handleNastyHome(request, env, corsHeaders) {
   const visitorId = Math.random().toString(36).substr(2, 4);
   const journeyId = 'jrn_' + generateToken();
 
-  await env.DB.prepare(
-    'INSERT INTO nasty_flow_sessions (user_id, nasty_session_id, visitor_id, journey_id) VALUES (?, ?, ?, ?)'
-  ).bind(user.id, nastySessionId, visitorId, journeyId).run();
+  // Generate sticky session route ID (simulates load balancer affinity cookie)
+  const routeHash = await sha256Hex(`route|${nastySessionId}`);
+  const routeId = 'srv_' + routeHash.slice(0, 8);
 
-  return new Response(JSON.stringify({
+  await env.DB.prepare(
+    'INSERT INTO nasty_flow_sessions (user_id, nasty_session_id, visitor_id, journey_id, route_id) VALUES (?, ?, ?, ?, ?)'
+  ).bind(user.id, nastySessionId, visitorId, journeyId, routeId).run();
+
+  const homeResponse = new Response(JSON.stringify({
     success: true,
     page: 'home',
     visitorId: visitorId,
@@ -5100,16 +5156,10 @@ async function handleNastyHome(request, env, corsHeaders) {
         campaign: null
       }
     }
-  }), {
-    status: 200,
-    headers: {
-      ...corsHeaders,
-      'Content-Type': 'application/json',
-      'X-Visitor-Id': visitorId,
-      'X-Journey-Id': journeyId,
-      'Set-Cookie': `nasty_session=${nastySessionId}; Path=/; HttpOnly; SameSite=Lax`
-    }
-  });
+  }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json', 'X-Visitor-Id': visitorId, 'X-Journey-Id': journeyId } });
+  homeResponse.headers.append('Set-Cookie', `nasty_session=${nastySessionId}; Path=/; HttpOnly; SameSite=Lax`);
+  homeResponse.headers.append('Set-Cookie', `ROUTEID=${routeId}; Path=/; SameSite=Lax`);
+  return homeResponse;
 }
 
 // T2: Login Page — HTML + Entity Encoding + Decoys + 30s Expiry
@@ -5133,6 +5183,8 @@ async function handleNastyLoginPage(request, env, corsHeaders) {
       status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
+  const routeError = validateRouteId(request, session, corsHeaders);
+  if (routeError) return routeError;
 
   // Generate tokens
   const csrfToken = await deriveNastyCsrf(nasty_session_id);
@@ -5140,10 +5192,16 @@ async function handleNastyLoginPage(request, env, corsHeaders) {
   const pageInstanceId = 'pinst_' + generateToken();
   const csrfCreatedAt = new Date().toISOString();
 
-  // Store in DB
+  // Dynamic field name suffix — per-session, forces dynamic regex extraction
+  const fieldSuffixHash = await sha256Hex(nasty_session_id + 'field_salt');
+  const fieldSuffix = fieldSuffixHash.slice(0, 4);
+  const csrfFieldName = `csrf_${fieldSuffix}`;
+  const aflowFieldName = `aflow_${fieldSuffix}`;
+
+  // Store in DB (include field_name_suffix for T3 validation)
   await env.DB.prepare(
-    'UPDATE nasty_flow_sessions SET csrf_token = ?, auth_flow_id = ?, page_instance_id = ?, csrf_token_created_at = ? WHERE nasty_session_id = ?'
-  ).bind(csrfToken, authFlowId, pageInstanceId, csrfCreatedAt, nasty_session_id).run();
+    'UPDATE nasty_flow_sessions SET csrf_token = ?, auth_flow_id = ?, page_instance_id = ?, csrf_token_created_at = ?, field_name_suffix = ? WHERE nasty_session_id = ?'
+  ).bind(csrfToken, authFlowId, pageInstanceId, csrfCreatedAt, fieldSuffix, nasty_session_id).run();
 
   // HTML-entity-encode the CSRF token (contains & characters)
   const encodedCsrf = escapeHtml(csrfToken);
@@ -5164,8 +5222,8 @@ async function handleNastyLoginPage(request, env, corsHeaders) {
 <body>
   <h1>Login</h1>
   <form id="loginForm" method="POST" action="/api/nasty/login-submit">
-    <input type="hidden" name="csrf_token" value="${encodedCsrf}" />
-    <input type="hidden" name="auth_flow_id" value="${authFlowId}" />
+    <input type="hidden" name="${csrfFieldName}" value="${encodedCsrf}" />
+    <input type="hidden" name="${aflowFieldName}" value="${authFlowId}" />
 ${decoyInputs.join('\n')}
     <div>
       <label for="username">Username:</label>
@@ -5196,7 +5254,7 @@ ${decoyInputs.join('\n')}
 // T3: Login Submit — Silent Partial Auth (The Trap)
 async function handleNastyLoginSubmit(request, env, corsHeaders) {
   const body = await request.json();
-  const { csrf_token, auth_flow_id, page_instance_id, username, password, nasty_session_id } = body;
+  const { page_instance_id, username, password, nasty_session_id } = body;
   const cookieHeader = request.headers.get('Cookie');
   const cookieSession = getCookieValue(cookieHeader, 'nasty_session');
 
@@ -5214,10 +5272,19 @@ async function handleNastyLoginSubmit(request, env, corsHeaders) {
       status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
+  const routeErr3 = validateRouteId(request, session, corsHeaders);
+  if (routeErr3) return routeErr3;
+
+  // Extract CSRF and auth_flow_id from dynamic field names
+  const fieldSuffix = session.field_name_suffix || '';
+  const csrfFieldName = `csrf_${fieldSuffix}`;
+  const aflowFieldName = `aflow_${fieldSuffix}`;
+  const csrf_token = body[csrfFieldName];
+  const auth_flow_id = body[aflowFieldName];
 
   // Validate credentials
   const user = await env.DB.prepare('SELECT id, username, email FROM users WHERE username = ? AND password_hash = ?')
-    .bind(username || '', 'hash_' + (password || '')).first();
+    .bind(username || '', `hash${password || ''}`).first();
 
   // Check all conditions for full auth
   let authLevel = 'full';
@@ -5341,6 +5408,8 @@ async function handleNastyAccountSummary(request, env, corsHeaders) {
       status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
+  const routeErr4 = validateRouteId(request, session, corsHeaders);
+  if (routeErr4) return routeErr4;
 
   // SWEC counter validation (Siebel-style strict sequencing)
   const expectedSwec = session.swec_counter + 1;
@@ -5358,13 +5427,16 @@ async function handleNastyAccountSummary(request, env, corsHeaders) {
   const auraMode = 'PROD';
   const auraApp = 'store:main';
 
-  await env.DB.prepare(
-    'UPDATE nasty_flow_sessions SET swec_counter = ?, aura_fwuid = ?, aura_mode = ?, aura_app = ? WHERE nasty_session_id = ?'
-  ).bind(newSwec, fwuid, auraMode, auraApp, nasty_session_id).run();
-
   const isFullAuth = session.auth_level === 'full';
 
-  return new Response(JSON.stringify({
+  // Conditional: full auth gets a reward token (guest-upgraded does NOT)
+  const rewardToken = isFullAuth ? 'rwt_' + generateToken() : null;
+
+  await env.DB.prepare(
+    'UPDATE nasty_flow_sessions SET swec_counter = ?, aura_fwuid = ?, aura_mode = ?, aura_app = ?, reward_token = ? WHERE nasty_session_id = ?'
+  ).bind(newSwec, fwuid, auraMode, auraApp, rewardToken, nasty_session_id).run();
+
+  const responseBody = {
     authenticated: true,
     authLevel: session.auth_level,
     account: {
@@ -5380,7 +5452,18 @@ async function handleNastyAccountSummary(request, env, corsHeaders) {
       mode: auraMode,
       app: auraApp
     }
-  }), {
+  };
+
+  // Only include loyalty block for full auth — key is ABSENT for guest-upgraded
+  if (isFullAuth) {
+    responseBody.loyalty = {
+      tier: 'gold',
+      rewardToken: rewardToken,
+      pointsBalance: 2450
+    };
+  }
+
+  return new Response(JSON.stringify(responseBody), {
     status: 200,
     headers: {
       ...corsHeaders,
@@ -5412,6 +5495,8 @@ async function handleNastyProduct(request, env, corsHeaders) {
       status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
+  const routeErr5 = validateRouteId(request, session, corsHeaders);
+  if (routeErr5) return routeErr5;
 
   // Increment SWEC
   const newSwec = session.swec_counter + 1;
@@ -5470,6 +5555,27 @@ async function handleNastyBasketAdd(request, env, corsHeaders) {
       status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
+  const routeErr6 = validateRouteId(request, session, corsHeaders);
+  if (routeErr6) return routeErr6;
+
+  // Idempotency key — required, must be unique per request
+  const idempotencyKey = request.headers.get('Idempotency-Key');
+  if (!idempotencyKey) {
+    return new Response(JSON.stringify({ error: 'Missing required header' }), {
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  // Check if this idempotency key was already used by ANY session
+  const existingIdem = await env.DB.prepare(
+    'SELECT idempotency_response FROM nasty_flow_sessions WHERE idempotency_key = ?'
+  ).bind(idempotencyKey).first();
+  if (existingIdem && existingIdem.idempotency_response) {
+    // Return the cached response — may be from a DIFFERENT session (silent cross-thread data)
+    return new Response(existingIdem.idempotency_response, {
+      status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
 
   // Validate product_view_token
   if (product_view_token !== session.product_view_token) {
@@ -5504,14 +5610,10 @@ async function handleNastyBasketAdd(request, env, corsHeaders) {
   const isFullAuth = session.auth_level === 'full';
   const ownership = isFullAuth ? 'authenticated' : 'anonymous';
 
-  await env.DB.prepare(
-    'UPDATE nasty_flow_sessions SET swec_counter = ?, basket_id = ?, basket_version = 1, basket_ownership = ? WHERE nasty_session_id = ?'
-  ).bind(newSwec, basketId, ownership, nasty_session_id).run();
-
   const basePrice = 249.99;
   const memberDiscount = isFullAuth ? 25.00 : 0;
 
-  return new Response(JSON.stringify({
+  const basketResponseBody = JSON.stringify({
     success: true,
     basket: {
       basketId: basketId,
@@ -5524,7 +5626,14 @@ async function handleNastyBasketAdd(request, env, corsHeaders) {
       total: basePrice - memberDiscount
     },
     swecCounter: newSwec
-  }), {
+  });
+
+  // Store basket + idempotency key + cached response
+  await env.DB.prepare(
+    'UPDATE nasty_flow_sessions SET swec_counter = ?, basket_id = ?, basket_version = 1, basket_ownership = ?, idempotency_key = ?, idempotency_response = ? WHERE nasty_session_id = ?'
+  ).bind(newSwec, basketId, ownership, idempotencyKey, basketResponseBody, nasty_session_id).run();
+
+  return new Response(basketResponseBody, {
     status: 200,
     headers: {
       ...corsHeaders,
@@ -5555,6 +5664,8 @@ async function handleNastyBasket(request, env, corsHeaders) {
       status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
+  const routeErr7 = validateRouteId(request, session, corsHeaders);
+  if (routeErr7) return routeErr7;
 
   if (basket_id !== session.basket_id) {
     return new Response(JSON.stringify({ error: 'basket_id mismatch' }), {
@@ -5623,6 +5734,8 @@ async function handleNastyCheckoutStart(request, env, corsHeaders) {
       status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
+  const routeErr8 = validateRouteId(request, session, corsHeaders);
+  if (routeErr8) return routeErr8;
 
   // Increment SWEC
   const newSwec = session.swec_counter + 1;
@@ -5631,12 +5744,19 @@ async function handleNastyCheckoutStart(request, env, corsHeaders) {
   const expectedAura = `${session.aura_fwuid};${session.aura_mode};${session.aura_app}`;
   const auraValid = aura_context === expectedAura;
 
-  // Check overall state consistency
+  // Validate request fingerprint — client must compute sha256(session_id|basket_id|version|aura)
+  const incomingFingerprint = request.headers.get('X-Request-Fingerprint');
+  const expectedFingerprintInput = `${nasty_session_id}|${basket_id}|${basket_version}|${aura_context}`;
+  const expectedFingerprint = await sha256Hex(expectedFingerprintInput);
+  const fingerprintValid = incomingFingerprint === expectedFingerprint;
+
+  // Check overall state consistency (fingerprint mismatch also triggers rebuild)
   const stateConsistent = (
     session.auth_level === 'full' &&
     basket_id === session.basket_id &&
     Number(basket_version) === session.basket_version &&
-    auraValid
+    auraValid &&
+    fingerprintValid
   );
 
   const flowRecovered = !stateConsistent;
@@ -5694,6 +5814,8 @@ async function handleNastyDeliveryOptions(request, env, corsHeaders) {
       status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
+  const routeErr9 = validateRouteId(request, session, corsHeaders);
+  if (routeErr9) return routeErr9;
 
   // Increment SWEC
   const newSwec = session.swec_counter + 1;
@@ -5708,9 +5830,14 @@ async function handleNastyDeliveryOptions(request, env, corsHeaders) {
     `delivery_quote|${session.checkout_flow_id}|${session.basket_version}`
   );
 
+  // Conditional: non-degraded full-auth gets premium option + premium quote token
+  const premiumQuoteToken = (!isDegraded && session.auth_level === 'full')
+    ? 'pqt_' + generateToken()
+    : null;
+
   await env.DB.prepare(
-    'UPDATE nasty_flow_sessions SET swec_counter = ?, delivery_quote_token = ? WHERE nasty_session_id = ?'
-  ).bind(newSwec, deliveryQuoteToken, nasty_session_id).run();
+    'UPDATE nasty_flow_sessions SET swec_counter = ?, delivery_quote_token = ?, premium_quote_token = ? WHERE nasty_session_id = ?'
+  ).bind(newSwec, deliveryQuoteToken, premiumQuoteToken, nasty_session_id).run();
 
   // Delivery quote token is ONLY in the header, never in the JSON body
   const deliveryOptions = isDegraded
@@ -5724,6 +5851,17 @@ async function handleNastyDeliveryOptions(request, env, corsHeaders) {
         { id: 'premium', label: 'Premium (same day)', price: 24.99 }
       ];
 
+  const responseHeaders = {
+    ...corsHeaders,
+    'Content-Type': 'application/json',
+    'X-Delivery-Quote': deliveryQuoteToken,
+    'X-SWEC-Counter': String(newSwec)
+  };
+  // Premium quote token only present for non-degraded full-auth — header absent otherwise
+  if (premiumQuoteToken) {
+    responseHeaders['X-Premium-Quote'] = premiumQuoteToken;
+  }
+
   return new Response(JSON.stringify({
     deliveryOptions: deliveryOptions,
     selectedOption: 'standard',
@@ -5732,12 +5870,7 @@ async function handleNastyDeliveryOptions(request, env, corsHeaders) {
     swecCounter: newSwec
   }), {
     status: 200,
-    headers: {
-      ...corsHeaders,
-      'Content-Type': 'application/json',
-      'X-Delivery-Quote': deliveryQuoteToken,
-      'X-SWEC-Counter': String(newSwec)
-    }
+    headers: responseHeaders
   });
 }
 
@@ -5761,6 +5894,8 @@ async function handleNastyPayment(request, env, corsHeaders) {
       status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
+  const routeErr10 = validateRouteId(request, session, corsHeaders);
+  if (routeErr10) return routeErr10;
 
   // Increment SWEC
   const newSwec = session.swec_counter + 1;
@@ -5833,7 +5968,8 @@ async function handleNastyConfirmOrder(request, env, corsHeaders) {
   const body = await request.json();
   const {
     nasty_session_id, checkout_flow_id, basket_id, basket_version,
-    delivery_quote_token, payment_nonce, pricing_signature, swec_counter
+    delivery_quote_token, payment_nonce, pricing_signature, swec_counter,
+    reward_token, premium_quote_token
   } = body;
   const cookieHeader = request.headers.get('Cookie');
   const cookieSession = getCookieValue(cookieHeader, 'nasty_session');
@@ -5853,6 +5989,8 @@ async function handleNastyConfirmOrder(request, env, corsHeaders) {
       status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
+  const routeErr11 = validateRouteId(request, session, corsHeaders);
+  if (routeErr11) return routeErr11;
 
   // Run ALL checks and collect results
   const checks = {};
@@ -5904,6 +6042,16 @@ async function handleNastyConfirmOrder(request, env, corsHeaders) {
   // Session cookie
   checks.sessionCookieCheck = cookieSession === nasty_session_id
     ? 'PASS' : 'FAIL: nasty_session cookie mismatch';
+
+  // Conditional tokens — only checked if they SHOULD be present
+  if (session.auth_level === 'full') {
+    checks.rewardTokenCheck = reward_token === session.reward_token
+      ? 'PASS' : 'FAIL: reward_token mismatch';
+  }
+  if (session.premium_quote_token) {
+    checks.premiumQuoteCheck = premium_quote_token === session.premium_quote_token
+      ? 'PASS' : 'FAIL: premium_quote_token mismatch';
+  }
 
   // Determine if all passed
   const allPassed = Object.values(checks).every(v => v === 'PASS');
@@ -6102,7 +6250,9 @@ function getNastyFlowPage() {
 
     <div class="session-card" id="sessionInfo">
       <h3>Session</h3>
-      <p>Login via the <a href="/login" style="color:var(--accent)">Login page</a> first, then start the flow.</p>
+      <p>Click <strong>Initialize</strong> to create a fresh user, or use existing login credentials.</p>
+      <button class="step-btn" onclick="initSession()" id="initBtn" style="margin-bottom:8px">Initialize Session</button>
+      <p>Username: <code id="dispUsername">—</code></p>
       <p>Session Token: <code id="dispSessionToken">—</code></p>
       <p>User ID: <code id="dispUserId">—</code></p>
     </div>
@@ -6115,7 +6265,7 @@ function getNastyFlowPage() {
         <div class="step-info">
           <h3>Home Page</h3>
           <p>Establishes nasty session, generates visitorId + journeyId</p>
-          <span class="edge-case-tag">Mixed extraction: JSON body + header + nested path</span>
+          <span class="edge-case-tag">Mixed extraction + ROUTEID sticky session cookie</span>
         </div>
         <span class="step-status status-pending" id="status1">pending</span>
         <button class="step-btn" onclick="runStep(1)">Run</button>
@@ -6125,8 +6275,8 @@ function getNastyFlowPage() {
         <div class="step-num">2</div>
         <div class="step-info">
           <h3>Login Page</h3>
-          <p>Returns HTML with csrf_token (entity-encoded), auth_flow_id, 200 decoys, pageInstanceId in script</p>
-          <span class="edge-case-tag">HTML entities + 200 decoys + 30s expiry + embedded script</span>
+          <p>Returns HTML with dynamic field names, entity-encoded CSRF, 200 decoys, pageInstanceId in script</p>
+          <span class="edge-case-tag">Dynamic field names + HTML entities + 200 decoys + 30s expiry</span>
         </div>
         <span class="step-status status-pending" id="status2">pending</span>
         <button class="step-btn" onclick="runStep(2)" disabled id="btn2">Run</button>
@@ -6148,7 +6298,7 @@ function getNastyFlowPage() {
         <div class="step-info">
           <h3>Account Summary</h3>
           <p>SWEC counter validation + aura context fragments for assembly</p>
-          <span class="edge-case-tag">Siebel SWEC counter + Salesforce aura.context fragments</span>
+          <span class="edge-case-tag">SWEC counter + aura fragments + conditional loyalty block</span>
         </div>
         <span class="step-status status-pending" id="status4">pending</span>
         <button class="step-btn" onclick="runStep(4)" disabled id="btn4">Run</button>
@@ -6170,7 +6320,7 @@ function getNastyFlowPage() {
         <div class="step-info">
           <h3>Add to Basket</h3>
           <p>Replays ~530KB viewstate + creates basket (authenticated or anonymous)</p>
-          <span class="edge-case-tag">Large payload replay + basket ownership based on auth level</span>
+          <span class="edge-case-tag">Large payload replay + Idempotency-Key header + basket ownership</span>
         </div>
         <span class="step-status status-pending" id="status6">pending</span>
         <button class="step-btn" onclick="runStep(6)" disabled id="btn6">Run</button>
@@ -6192,7 +6342,7 @@ function getNastyFlowPage() {
         <div class="step-info">
           <h3>Start Checkout</h3>
           <p>Validates client-assembled aura_context — silent flow rebuild on mismatch</p>
-          <span class="edge-case-tag">Client-assembled value + silent flow rebuild</span>
+          <span class="edge-case-tag">Client-assembled value + X-Request-Fingerprint + silent flow rebuild</span>
         </div>
         <span class="step-status status-pending" id="status8">pending</span>
         <button class="step-btn" onclick="runStep(8)" disabled id="btn8">Run</button>
@@ -6203,7 +6353,7 @@ function getNastyFlowPage() {
         <div class="step-info">
           <h3>Delivery Options</h3>
           <p>Delivery quote token is ONLY in X-Delivery-Quote response header</p>
-          <span class="edge-case-tag">Header-only extraction (not in JSON body)</span>
+          <span class="edge-case-tag">Header-only extraction + conditional X-Premium-Quote</span>
         </div>
         <span class="step-status status-pending" id="status9">pending</span>
         <button class="step-btn" onclick="runStep(9)" disabled id="btn9">Run</button>
@@ -6238,12 +6388,16 @@ function getNastyFlowPage() {
   <script>
     // Flow state
     const state = {
-      session_token: localStorage.getItem('session_token'),
-      user_id: localStorage.getItem('user_id'),
+      session_token: null,
+      user_id: null,
+      username: null,
+      password: null,
       nasty_session_id: null,
       visitor_id: null,
       journey_id: null,
+      csrf_field_name: null,
       csrf_token: null,
+      aflow_field_name: null,
       auth_flow_id: null,
       page_instance_id: null,
       access_token: null,
@@ -6251,6 +6405,7 @@ function getNastyFlowPage() {
       aura_fwuid: null,
       aura_mode: null,
       aura_app: null,
+      reward_token: null,
       product_view_token: null,
       view_state: null,
       view_state_signature: null,
@@ -6258,13 +6413,46 @@ function getNastyFlowPage() {
       basket_version: null,
       checkout_flow_id: null,
       delivery_quote_token: null,
+      premium_quote_token: null,
       payment_nonce: null,
       pricing_signature: null
     };
 
+    async function initSession() {
+      log('--- Initializing Session ---');
+      const res = await fetch('/api/nasty/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count: 1 })
+      });
+      const data = await res.json();
+      if (data.users && data.users.length > 0) {
+        const u = data.users[0];
+        state.session_token = u.session_token;
+        state.user_id = u.user_id;
+        state.username = u.username;
+        state.password = u.password;
+        document.getElementById('dispUsername').textContent = u.username;
+        document.getElementById('dispSessionToken').textContent = u.session_token.slice(0, 16) + '...';
+        document.getElementById('dispUserId').textContent = u.user_id;
+        document.getElementById('initBtn').disabled = true;
+        document.getElementById('initBtn').textContent = 'Initialized';
+        log('User created: ' + u.username + ' (ID: ' + u.user_id + ')');
+      } else {
+        log('ERROR: Init failed - ' + JSON.stringify(data));
+      }
+    }
+
+    // SHA-256 hex helper for request fingerprint
+    async function sha256hex(str) {
+      const data = new TextEncoder().encode(str);
+      const hash = await crypto.subtle.digest('SHA-256', data);
+      return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
     // Display session info
-    document.getElementById('dispSessionToken').textContent = state.session_token || 'not logged in';
-    document.getElementById('dispUserId').textContent = state.user_id || '—';
+    document.getElementById('dispSessionToken').textContent = '—';
+    document.getElementById('dispUserId').textContent = '—';
 
     function log(msg) {
       const area = document.getElementById('resultArea');
@@ -6308,6 +6496,10 @@ function getNastyFlowPage() {
 
     async function runAllSteps() {
       document.getElementById('resultArea').textContent = '';
+      // Auto-init if no session
+      if (!state.session_token) {
+        await initSession();
+      }
       for (let i = 1; i <= 11; i++) {
         await runStep(i);
         // Small delay between steps
@@ -6316,6 +6508,10 @@ function getNastyFlowPage() {
     }
 
     async function stepHome() {
+      if (!state.session_token) {
+        log('No session — initializing...');
+        await initSession();
+      }
       const res = await fetch('/api/nasty/home', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -6341,20 +6537,21 @@ function getNastyFlowPage() {
         body: JSON.stringify({ nasty_session_id: state.nasty_session_id })
       });
       const html = await res.text();
-      // Extract csrf_token from hidden field and decode HTML entities
-      const csrfMatch = html.match(/name="csrf_token"\\s+value="([^"]*)"/);
+      // Extract CSRF from DYNAMIC field name (csrf_XXXX) and decode HTML entities
+      const csrfMatch = html.match(/name="(csrf_[a-z0-9]{4})"\\s+value="([^"]*)"/);
       if (csrfMatch) {
-        // Decode HTML entities
+        state.csrf_field_name = csrfMatch[1];
         const ta = document.createElement('textarea');
-        ta.innerHTML = csrfMatch[1];
+        ta.innerHTML = csrfMatch[2];
         state.csrf_token = ta.value;
-        log('Extracted csrf_token (decoded): ' + state.csrf_token);
+        log('Extracted ' + state.csrf_field_name + ' (decoded): ' + state.csrf_token);
       }
-      // Extract auth_flow_id
-      const afMatch = html.match(/name="auth_flow_id"\\s+value="([^"]*)"/);
+      // Extract auth_flow_id from DYNAMIC field name (aflow_XXXX)
+      const afMatch = html.match(/name="(aflow_[a-z0-9]{4})"\\s+value="([^"]*)"/);
       if (afMatch) {
-        state.auth_flow_id = afMatch[1];
-        log('Extracted auth_flow_id: ' + state.auth_flow_id);
+        state.aflow_field_name = afMatch[1];
+        state.auth_flow_id = afMatch[2];
+        log('Extracted ' + state.aflow_field_name + ': ' + state.auth_flow_id);
       }
       // Extract pageInstanceId from <script> JSON
       const piMatch = html.match(/pageInstanceId:\\s*"([^"]*)"/);
@@ -6368,17 +6565,21 @@ function getNastyFlowPage() {
     }
 
     async function stepLoginSubmit() {
+      // Build body with DYNAMIC field names
+      const submitBody = {
+        nasty_session_id: state.nasty_session_id,
+        page_instance_id: state.page_instance_id,
+        username: state.username || 'testuser1',
+        password: state.password || '123'
+      };
+      // Use the dynamic field names extracted from T2
+      if (state.csrf_field_name) submitBody[state.csrf_field_name] = state.csrf_token;
+      if (state.aflow_field_name) submitBody[state.aflow_field_name] = state.auth_flow_id;
+
       const res = await fetch('/api/nasty/login-submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nasty_session_id: state.nasty_session_id,
-          csrf_token: state.csrf_token,
-          auth_flow_id: state.auth_flow_id,
-          page_instance_id: state.page_instance_id,
-          username: 'testuser1',
-          password: '123'
-        })
+        body: JSON.stringify(submitBody)
       });
       const data = await res.json();
       log(JSON.stringify(data, null, 2));
@@ -6415,6 +6616,11 @@ function getNastyFlowPage() {
         state.aura_app = data.auraContext.app;
         log('Aura fragments: ' + state.aura_fwuid + ';' + state.aura_mode + ';' + state.aura_app);
       }
+      // Capture conditional loyalty reward token (only present for full auth)
+      if (data.loyalty && data.loyalty.rewardToken) {
+        state.reward_token = data.loyalty.rewardToken;
+        log('Loyalty rewardToken: ' + state.reward_token);
+      }
       setStatus(4, data.authLevel === 'full' ? 'pass' : 'degraded', data.authLevel);
       enableBtn(5);
     }
@@ -6442,9 +6648,12 @@ function getNastyFlowPage() {
     }
 
     async function stepBasketAdd() {
+      // Generate unique idempotency key per request
+      const idempotencyKey = crypto.randomUUID();
+      log('Idempotency-Key: ' + idempotencyKey);
       const res = await fetch('/api/nasty/basket-add', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
         body: JSON.stringify({
           nasty_session_id: state.nasty_session_id,
           access_token: state.access_token,
@@ -6489,9 +6698,13 @@ function getNastyFlowPage() {
 
     async function stepCheckoutStart() {
       const auraContext = state.aura_fwuid + ';' + state.aura_mode + ';' + state.aura_app;
+      // Compute request fingerprint from 4 previously-extracted values
+      const fingerprintInput = state.nasty_session_id + '|' + state.basket_id + '|' + state.basket_version + '|' + auraContext;
+      const fingerprint = await sha256hex(fingerprintInput);
+      log('X-Request-Fingerprint: ' + fingerprint);
       const res = await fetch('/api/nasty/checkout-start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Request-Fingerprint': fingerprint },
         body: JSON.stringify({
           nasty_session_id: state.nasty_session_id,
           access_token: state.access_token,
@@ -6524,6 +6737,12 @@ function getNastyFlowPage() {
       });
       // Token is ONLY in the header
       state.delivery_quote_token = res.headers.get('X-Delivery-Quote');
+      // Conditional: premium quote token only present for non-degraded full-auth
+      const premiumQuote = res.headers.get('X-Premium-Quote');
+      if (premiumQuote) {
+        state.premium_quote_token = premiumQuote;
+        log('X-Premium-Quote header: ' + premiumQuote);
+      }
       const data = await res.json();
       log(JSON.stringify(data, null, 2));
       log('X-Delivery-Quote header: ' + state.delivery_quote_token);
@@ -6562,7 +6781,9 @@ function getNastyFlowPage() {
       // Check degraded indicators
       const riskMatch = html.match(/riskMode:\\s*"([^"]*)"/);
       const riskMode = riskMatch ? riskMatch[1] : 'unknown';
-      state.swec_counter = (state.swec_counter || 0) + 1;
+      // Sync SWEC from response header (HTML response has no JSON swecCounter)
+      const swecHeader = res.headers.get('X-SWEC-Counter');
+      state.swec_counter = swecHeader ? parseInt(swecHeader) : (state.swec_counter || 0) + 1;
       log('riskMode: ' + riskMode);
       setStatus(10, riskMode === 'standard' ? 'pass' : 'degraded', riskMode);
       enableBtn(11);
@@ -6580,7 +6801,9 @@ function getNastyFlowPage() {
           delivery_quote_token: state.delivery_quote_token,
           payment_nonce: state.payment_nonce,
           pricing_signature: state.pricing_signature,
-          swec_counter: state.swec_counter
+          swec_counter: state.swec_counter + 1,
+          reward_token: state.reward_token,
+          premium_quote_token: state.premium_quote_token
         })
       });
       const data = await res.json();
