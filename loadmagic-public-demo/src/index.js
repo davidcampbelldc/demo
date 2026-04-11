@@ -44,6 +44,14 @@ export default {
               headers: { ...corsHeaders, 'Content-Type': 'text/html' }
             });
 
+          case path === '/profile' && method === 'GET':
+            return new Response(getProfilePage(), {
+              headers: { ...corsHeaders, 'Content-Type': 'text/html' }
+            });
+
+          case path === '/api/profile/upload' && method === 'POST':
+            return await handleProfileUpload(request, env, corsHeaders);
+
           case path === '/api/login' && method === 'POST':
             return await handleLogin(request, env, corsHeaders);
   
@@ -1064,6 +1072,213 @@ Congratulations! Your correlation is working perfectly!`;
     }
   }
 
+  // Profile upload handler — multipart/form-data demo endpoint.
+  //
+  // NOTE (ephemeral-by-design):
+  //   File contents are buffered in memory to validate size + content-type
+  //   and compute a SHA-256 checksum, then discarded. Only metadata is
+  //   persisted (to profile_uploads). This keeps the demo honest for HAR
+  //   capture / correlation while avoiding R2/KV cost on a demo site that
+  //   has no R2 binding. The response flags this clearly via
+  //   `content_persisted: false`.
+  async function handleProfileUpload(request, env, corsHeaders) {
+    const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'application/pdf'];
+    const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+
+    try {
+      // Parse multipart/form-data — native in Workers via request.formData()
+      let form;
+      try {
+        form = await request.formData();
+      } catch (e) {
+        return new Response(JSON.stringify({
+          error: 'Invalid multipart/form-data body',
+          message: 'Expected Content-Type: multipart/form-data with a "file" part and session fields.',
+          hint: 'Use an HTML form with enctype="multipart/form-data" or curl -F.'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const session_token  = form.get('session_token');
+      const user_id_raw    = form.get('user_id');
+      const correlation_id = form.get('correlation_id');
+      const session_id     = form.get('session_id');
+      const csrf_token     = form.get('csrf_token');
+      const kindField      = form.get('kind'); // optional: "avatar" | "attachment"
+      const kind = (kindField === 'avatar' || kindField === 'attachment') ? kindField : 'attachment';
+
+      if (!session_token || !user_id_raw || !correlation_id || !session_id || !csrf_token) {
+        return new Response(JSON.stringify({
+          error: 'Missing required session fields',
+          required: ['file', 'session_token', 'user_id', 'correlation_id', 'session_id', 'csrf_token'],
+          optional: ['kind'],
+          message: 'All session fields must be provided as form fields alongside the file part.'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const user_id = parseInt(user_id_raw, 10);
+      if (!Number.isFinite(user_id)) {
+        return new Response(JSON.stringify({
+          error: 'Invalid user_id',
+          message: 'user_id must be an integer form field.'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const file = form.get('file');
+      if (!file || typeof file === 'string') {
+        return new Response(JSON.stringify({
+          error: 'Missing file part',
+          message: 'Request must include a "file" part of type File.'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // File is a Cloudflare Workers File object (Blob + name).
+      const filename = file.name || 'upload.bin';
+      const contentType = file.type || 'application/octet-stream';
+      const declaredSize = typeof file.size === 'number' ? file.size : null;
+
+      if (!ACCEPTED_TYPES.includes(contentType.toLowerCase())) {
+        return new Response(JSON.stringify({
+          error: 'Unsupported content type',
+          content_type: contentType,
+          accepted: ACCEPTED_TYPES,
+          message: 'Only PNG, JPG, and PDF uploads are accepted on the demo.'
+        }), {
+          status: 415,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (declaredSize !== null && declaredSize > MAX_BYTES) {
+        return new Response(JSON.stringify({
+          error: 'File too large',
+          size_bytes: declaredSize,
+          max_bytes: MAX_BYTES,
+          message: 'Demo upload limit is 5 MB.'
+        }), {
+          status: 413,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Buffer the file to validate real size and compute a checksum.
+      // This is then discarded — no persistence to disk/object-store.
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const size_bytes = bytes.byteLength;
+
+      if (size_bytes > MAX_BYTES) {
+        return new Response(JSON.stringify({
+          error: 'File too large',
+          size_bytes,
+          max_bytes: MAX_BYTES,
+          message: 'Demo upload limit is 5 MB (detected after buffering).'
+        }), {
+          status: 413,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (size_bytes === 0) {
+        return new Response(JSON.stringify({
+          error: 'Empty file',
+          message: 'Uploaded file is empty.'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // SHA-256 of the buffered bytes (exercised so the checksum is real).
+      const digestBuf = await crypto.subtle.digest('SHA-256', bytes);
+      const sha256 = Array.from(new Uint8Array(digestBuf))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+
+      if (!env.DB) {
+        return new Response(JSON.stringify({
+          error: 'Database not available',
+          debug: 'env.DB is undefined - check wrangler.toml binding'
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Validate session — matches the 5-token pattern used elsewhere.
+      const user = await env.DB.prepare(
+        'SELECT id, username, email FROM users WHERE session_token = ? AND id = ? AND session_id = ? AND csrf_token = ? AND correlation_id = ?'
+      ).bind(session_token, user_id, session_id, csrf_token, correlation_id).first();
+
+      if (!user) {
+        return new Response(JSON.stringify({
+          error: 'Invalid session data',
+          message: 'One or more session tokens are invalid or mismatched (session_token, user_id, session_id, csrf_token, correlation_id).'
+        }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Persist metadata row. File bytes are NOT stored.
+      const upload_token = generateToken();
+      await env.DB.prepare(
+        'INSERT INTO profile_uploads (upload_token, user_id, filename, content_type, size_bytes, sha256, kind, correlation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(upload_token, user.id, filename, contentType, size_bytes, sha256, kind, correlation_id).run();
+
+      return new Response(JSON.stringify({
+        success: true,
+        upload_token,
+        kind,
+        file: {
+          filename,
+          content_type: contentType,
+          size_bytes,
+          sha256
+        },
+        user_id: user.id,
+        username: user.username,
+        correlation_id,
+        content_persisted: false,
+        storage_note: 'Demo endpoint: file bytes are buffered for validation and discarded. Only metadata is persisted in profile_uploads. No R2/KV bucket is used.',
+        server_metadata: {
+          request_id: generateToken(),
+          server_time: new Date().toISOString(),
+          api_version: 'v1.2.3'
+        }
+      }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+          'X-Upload-Token': upload_token,
+          'X-Upload-Size': String(size_bytes),
+          'X-Upload-Sha256': sha256,
+          'X-Correlation-Id': correlation_id
+        }
+      });
+    } catch (error) {
+      console.error('Error in handleProfileUpload:', error);
+      return new Response(JSON.stringify({
+        error: 'Upload failed',
+        message: error.message
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
 // Utility Functions
 function generateToken() {
   return 'tok_' + Math.random().toString(36).substr(2, 16) + Date.now().toString(36);
@@ -1412,6 +1627,7 @@ function renderHeader(title, subtitle = '') {
         <a href="/products">Products</a>
         <a href="/login">Login</a>
         <a href="/dashboard">Dashboard</a>
+        <a href="/profile">Profile</a>
       </nav>
     </header>
   `;
@@ -1449,6 +1665,7 @@ function getHomePage() {
               <li><a href="/products">Products Catalog</a></li>
               <li><a href="/checkout">Checkout Process</a> (session required)</li>
               <li><a href="/dashboard">Authenticated Dashboard</a> (session required)</li>
+              <li><a href="/profile">Profile</a> &mdash; file upload (multipart/form-data, session required)</li>
           </ul>
       </div>
       
@@ -1513,6 +1730,13 @@ function getHomePage() {
                   <span class="method post">POST</span> <strong>/api/http-test-step2</strong><br>
                   Body: <code>{"session_token": "...", "user_id": 1, "correlation_id": "...", "step2_token": "..."}</code><br>
                   Returns: <strong>Plain HTTP text response (not JSON)</strong> - Requires Step 2 token from Step 1!
+              </div>
+
+              <div class="endpoint">
+                  <span class="method post">POST</span> <strong>/api/profile/upload</strong><br>
+                  Content-Type: <code>multipart/form-data</code><br>
+                  Form fields: <code>file</code>, <code>session_token</code>, <code>user_id</code>, <code>session_id</code>, <code>csrf_token</code>, <code>correlation_id</code>, optional <code>kind</code><br>
+                  Returns: <code>upload_token</code> + file metadata (sha256, size). File bytes are <strong>not persisted</strong>.
               </div>
           </div>
       </div>
@@ -1798,14 +2022,19 @@ function getDashboardPage() {
           </div>
           
           <div class="endpoint-test">
+              <button onclick="window.location.href='/profile'" style="background: #6fd6ff;">Go to Profile → File Upload</button>
+              <span>Multipart upload demo (POST /api/profile/upload)</span>
+          </div>
+
+          <div class="endpoint-test">
               <button onclick="testLogout()">Test Logout</button>
               <span>Clear session token (simulate logout)</span>
           </div>
       </div>
-      
+
       <div class="card" id="test-results"></div>
-      
-      <p><a href="/">← Back to Home</a> | <a href="/login">Login</a></p>
+
+      <p><a href="/">← Back to Home</a> | <a href="/login">Login</a> | <a href="/profile">Profile</a></p>
     </div>
     
     <script>
@@ -2138,6 +2367,203 @@ function getDashboardPage() {
   </body>
   </html>`;
   }
+
+function getProfilePage() {
+  return `<!DOCTYPE html>
+<html>
+<head>
+    <title>Profile - LoadMagic Test Demo</title>
+    <style>
+      ${BASE_STYLES}
+      .form-card { max-width: 640px; }
+      form.upload-form {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .file-input-row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .kind-row label {
+        margin-right: 14px;
+        color: var(--text);
+      }
+    </style>
+</head>
+<body class="page">
+    ${renderHeader('Profile', 'Avatar & attachment upload (multipart/form-data)')}
+    <div class="content">
+      <div class="card session-info" id="session-info">
+        <h3>Session Information</h3>
+        <p>Loading session data...</p>
+      </div>
+
+      <div class="card form-card">
+        <h2 class="section-title">Upload a file</h2>
+        <p class="hint">
+          POST <code>/api/profile/upload</code> — accepts <code>multipart/form-data</code>.
+          Pick a PNG, JPG, or PDF up to 5&nbsp;MB. The server buffers the file to validate
+          size + content-type and compute a SHA-256, then <strong>discards the bytes</strong>.
+          Only metadata (filename, size, checksum, upload token) is persisted to
+          <code>profile_uploads</code>. This is a demo endpoint — no R2/object storage is used.
+        </p>
+
+        <form class="upload-form" onsubmit="handleUpload(event)">
+          <div class="kind-row">
+            <label><input type="radio" name="kind" value="avatar" checked> Avatar</label>
+            <label><input type="radio" name="kind" value="attachment"> Attachment</label>
+          </div>
+
+          <div class="file-input-row">
+            <input type="file" id="file" name="file" accept="image/png,image/jpeg,application/pdf" required>
+          </div>
+
+          <button type="submit">Upload file</button>
+        </form>
+
+        <div id="result" style="margin-top: 16px;"></div>
+
+        <p style="margin-top: 18px;">
+          <a href="/dashboard">← Back to Dashboard</a> &middot;
+          <a href="/">Home</a>
+        </p>
+      </div>
+
+      <div class="card">
+        <h2 class="section-title">Endpoint reference</h2>
+        <div class="endpoint">
+          <span class="method post">POST</span>
+          <strong>/api/profile/upload</strong>
+        </div>
+        <p class="hint" style="margin-top: 10px;">
+          Content-Type: <code>multipart/form-data</code><br>
+          Required form fields:
+          <code>file</code>, <code>session_token</code>, <code>user_id</code>,
+          <code>session_id</code>, <code>csrf_token</code>, <code>correlation_id</code><br>
+          Optional form field: <code>kind</code> (<code>avatar</code> or <code>attachment</code>)
+        </p>
+        <p class="hint">
+          Example via curl (after logging in through <a href="/login">/login</a> to obtain the tokens):
+        </p>
+        <pre>curl -X POST https://public.loadmagic.ai/api/profile/upload \\
+  -F "file=@./avatar.png;type=image/png" \\
+  -F "kind=avatar" \\
+  -F "session_token=tok_..." \\
+  -F "user_id=1" \\
+  -F "session_id=sess_..." \\
+  -F "csrf_token=tok_..." \\
+  -F "correlation_id=tok_..."</pre>
+      </div>
+    </div>
+
+    <script>
+      function renderSession() {
+        const token = localStorage.getItem('session_token');
+        const username = localStorage.getItem('username');
+        const userId = localStorage.getItem('user_id');
+        const sessionId = localStorage.getItem('session_id');
+        const csrfToken = localStorage.getItem('csrf_token');
+        const correlationId = localStorage.getItem('correlation_id');
+
+        const el = document.getElementById('session-info');
+        if (token && userId && sessionId && csrfToken && correlationId) {
+          el.innerHTML =
+            '<h3>[OK] Active Session</h3>' +
+            '<p><strong>Username:</strong> ' + (username || 'Unknown') + '</p>' +
+            '<p><strong>User ID:</strong> ' + userId + '</p>' +
+            '<p><strong>Session Token:</strong> <code>' + token.substring(0, 24) + '...</code></p>' +
+            '<p><strong>Correlation ID:</strong> <code>' + correlationId.substring(0, 24) + '...</code></p>';
+        } else {
+          el.innerHTML =
+            '<h3>[ERROR] No Active Session</h3>' +
+            '<p>You need to <a href="/login">login</a> first to upload a file (the upload handler validates the 5-token session).</p>';
+        }
+      }
+
+      window.addEventListener('load', renderSession);
+
+      async function handleUpload(event) {
+        event.preventDefault();
+
+        const token = localStorage.getItem('session_token');
+        const userId = localStorage.getItem('user_id');
+        const sessionId = localStorage.getItem('session_id');
+        const csrfToken = localStorage.getItem('csrf_token');
+        const correlationId = localStorage.getItem('correlation_id');
+
+        if (!token || !userId || !sessionId || !csrfToken || !correlationId) {
+          showResult('error', 'Missing session data. Please <a href="/login">login</a> first.');
+          return;
+        }
+
+        const fileInput = document.getElementById('file');
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) {
+          showResult('error', 'Please choose a file to upload.');
+          return;
+        }
+
+        const kindRadio = document.querySelector('input[name="kind"]:checked');
+        const kind = kindRadio ? kindRadio.value : 'attachment';
+
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('kind', kind);
+        fd.append('session_token', token);
+        fd.append('user_id', userId);
+        fd.append('session_id', sessionId);
+        fd.append('csrf_token', csrfToken);
+        fd.append('correlation_id', correlationId);
+
+        showResult('info', 'Uploading ' + file.name + ' (' + file.size + ' bytes, ' + (file.type || 'unknown') + ')...');
+
+        try {
+          const response = await fetch('/api/profile/upload', {
+            method: 'POST',
+            body: fd
+            // NOTE: no Content-Type header — the browser sets the multipart
+            // boundary automatically when given a FormData body.
+          });
+
+          let data;
+          const ct = response.headers.get('content-type') || '';
+          if (ct.includes('application/json')) {
+            data = await response.json();
+          } else {
+            data = { raw: await response.text() };
+          }
+
+          if (response.ok && data.success) {
+            showResult('success', 'Upload accepted. File bytes were validated and discarded (see storage_note).', data);
+          } else {
+            showResult('error', 'Upload failed: ' + (data.error || response.status), data);
+          }
+        } catch (err) {
+          showResult('error', 'Network error: ' + err.message);
+        }
+      }
+
+      function showResult(type, message, data) {
+        const el = document.getElementById('result');
+        const ts = new Date().toLocaleTimeString();
+        let html = '<div class="' + type + '"><strong>[' + ts + '] ' + message + '</strong>';
+        if (data) {
+          html += '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+        }
+        html += '</div>';
+        el.innerHTML = html;
+      }
+    </script>
+  </body>
+  </html>`;
+}
 
 function getCheckoutPage() {
   return `<!DOCTYPE html>

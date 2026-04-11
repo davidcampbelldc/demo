@@ -1,0 +1,2 @@
+# Wrangler / miniflare local state — never commit local D1/KV/R2 snapshots
+.wrangler/
