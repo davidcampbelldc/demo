@@ -2514,13 +2514,13 @@ function getProfilePage() {
         const kind = kindRadio ? kindRadio.value : 'attachment';
 
         const fd = new FormData();
-        fd.append('file', file);
-        fd.append('kind', kind);
         fd.append('session_token', token);
-        fd.append('user_id', userId);
         fd.append('session_id', sessionId);
         fd.append('csrf_token', csrfToken);
         fd.append('correlation_id', correlationId);
+        fd.append('user_id', userId);
+        fd.append('kind', kind);
+        fd.append('file', file);
 
         showResult('info', 'Uploading ' + file.name + ' (' + file.size + ' bytes, ' + (file.type || 'unknown') + ')...');
 
