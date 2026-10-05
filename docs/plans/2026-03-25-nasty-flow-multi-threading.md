@@ -1,3 +1,12 @@
+---
+title: "Nasty Flow: Adding Multi-Threading Correlation Traps to the JMeter Test Demo"
+date: 2026-03-25
+status: PARTIAL
+question: "How should the Nasty Flow be made self-contained and extended with realistic multi-threading correlation traps for concurrent JMeter testing?"
+topic: plans
+backfilled: 2026-10-05
+---
+
 # Nasty Flow: Multi-Threading Correlation Traps
 
 **Date:** 2026-03-25

@@ -1,3 +1,12 @@
+---
+title: "Design of a layered retail checkout demo flow with silent failures and late error symptoms"
+date: 2026-03-24
+status: PARTIAL
+question: "How can a demo flow be designed so correlation failures stay silent behind HTTP 200 responses and only surface as misleading late-stage errors?"
+topic: docs
+backfilled: 2026-10-05
+---
+
 ## Goal
 
 Create a demo flow where:
